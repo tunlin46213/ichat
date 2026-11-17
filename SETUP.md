@@ -87,6 +87,44 @@ Home Screen က iChat ကို ဖွင့်ပါ → **Settings → Message
 
 ---
 
+## iPhone app အစစ် — Sideloadly + free Apple ID ($0)
+
+Mac နဲ့ Apple $99 မလိုပါဘူး။ ဒါပေမဲ့ ကန့်သတ်ချက်တွေ ရှိပါတယ်:
+- ⚠️ **၇ ရက်တစ်ခါ** ပြန် install (refresh) လုပ်ရပါမယ်။ မလုပ်ရင် app ပွင့်မရတော့ပါဘူး (data မပျောက်ပါဘူး)။
+- ⚠️ Push notification **မရပါဘူး** (free Apple ID မှာ ခွင့်မပြုလို့ပါ)။ App ဖွင့်ထားချိန်မှာတော့ စာ realtime ရောက်ပါတယ်။
+- Free Apple ID တစ်ခုနဲ့ iPhone တစ်လုံးမှာ sideload app **၃ ခုအထိ** ပဲ ထည့်လို့ရပါတယ်။
+
+### A. `.ipa` ကို GitHub မှာ build ထုတ်ပါ (Mac မလို)
+1. Code ကို GitHub ပေါ် push လုပ်ထားပါ။
+2. https://github.com/tunlin46213/ichat/actions → ဘယ်ဘက်က **iOS sideload build** → **Run workflow** → **Run workflow** နှိပ်ပါ။
+3. ~၂၀–၃၀ မိနစ် စောင့်ပါ။ ✅ အစိမ်းရောင် ဖြစ်ရင် run ကို နှိပ်ပါ → အောက်ဆုံး **Artifacts → iChat-ipa** ကို download လုပ်ပါ → zip ကို ဖြည်ပါ → **`iChat.ipa`** ရပါမယ်။
+   - Repo က **public** ဆိုရင် အခမဲ့ အကန့်အသတ်မရှိ build ထုတ်လို့ရပါတယ်။ **Private** ဆိုရင် တစ်လ macOS ~200 မိနစ် (build ~၆–၈ ကြိမ်) အခမဲ့ ရပါတယ်။
+   - ❌ အနီရောင် ဖြစ်ရင် error log ကို ကျွန်တော့်ကို ပို့ပေးပါ။
+
+### B. ကွန်ပျူတာမှာ program ထည့်ပါ (တစ်ကြိမ်ပဲ)
+1. **iTunes** နဲ့ **iCloud** ကို Apple website ကနေ download လုပ်ပြီး ထည့်ပါ။ (**Microsoft Store version မဟုတ်တာ** ဖြစ်ရပါမယ်။ Sideloadly က Apple website version ကိုပဲ သုံးလို့ရပါတယ်)
+   - https://www.apple.com/itunes/download/win64
+   - https://support.apple.com/en-us/103232 (iCloud for Windows)
+2. **Sideloadly**: https://sideloadly.io → download လုပ်ပြီး install လုပ်ပါ။
+
+### C. iPhone ထဲ install လုပ်ပါ
+1. iPhone ကို USB ကြိုးနဲ့ ကွန်ပျူတာမှာ ချိတ်ပါ → iPhone မှာ **Trust This Computer** ပေါ်ရင် **Trust** နှိပ်ပါ။
+2. Sideloadly ကို ဖွင့်ပါ → `iChat.ipa` ကို ဆွဲထည့်ပါ → **Apple ID** (email) ထည့်ပါ → **Start** နှိပ်ပါ → Apple ID password ထည့်ပါ။
+   - ⚠️ အဓိက Apple ID အစား **app သွင်းဖို့ သီးသန့် Apple ID အသစ်** တစ်ခု ဖွင့်သုံးတာ ပိုလုံခြုံပါတယ်။
+3. iPhone မှာ:
+   - **Settings → General → VPN & Device Management** → ကိုယ့် Apple ID ကို နှိပ်ပါ → **Trust** နှိပ်ပါ။
+   - **Settings → Privacy & Security → Developer Mode → On** → iPhone restart ဖြစ်ပါမယ် → **Turn On** နှိပ်ပါ။
+4. Home Screen က **iChat** ကို ဖွင့်ပါ 🎉
+
+iPhone ၃ လုံးလုံးကို ဒီအဆင့် C အတိုင်း တစ်လုံးချင်း လုပ်ပါ။
+
+### D. ၇ ရက်တစ်ခါ refresh လုပ်ပါ
+- Sideloadly က **Automatic refresh** ကို ဖွင့်ထားပြီး iPhone နဲ့ ကွန်ပျူတာ **WiFi တစ်ခုတည်း** မှာ ရှိရင် အလိုအလျောက် refresh လုပ်ပေးပါတယ်။
+- မဟုတ်ရင် ၇ ရက်မပြည့်ခင် iPhone ကို ပြန်ချိတ်ပြီး အဆင့် C.2 ကို ပြန်လုပ်ပါ။
+- Code အသစ် ပြင်ပြီးရင် အဆင့် A ကနေ build ပြန်ထုတ်ပြီး install ပြန်လုပ်ပါ။
+
+---
+
 ## (နောက်မှ) Native iPhone app + Voice call — Apple $99
 
 Voice call နဲ့ App Store မှာ တင်ချင်တဲ့အခါ ဒီအဆင့်တွေ လုပ်ပါ:
