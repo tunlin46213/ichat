@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "ichat",
+    "name": "iChat",
     "slug": "ichat",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -8,9 +8,19 @@
     "scheme": "ichat",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/expo.icon",
+      "bundleIdentifier": "com.tunlin.ichat",
+      "supportsTablet": false,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": [
+          "audio",
+          "remote-notification"
+        ]
+      }
     },
     "android": {
+      "package": "com.tunlin.ichat",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -21,7 +31,11 @@
     },
     "web": {
       "output": "single",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/favicon.png",
+      "name": "iChat",
+      "shortName": "iChat",
+      "themeColor": "#208AEF",
+      "backgroundColor": "#000000"
     },
     "plugins": [
       "expo-router",
@@ -32,8 +46,49 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
         }
-      ]
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "iChat uses the microphone to record voice messages and for voice calls."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "iChat lets you choose photos to send in chats and to use as your profile picture.",
+          "cameraPermission": "iChat uses the camera to take photos to send in chats."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#208AEF"
+        }
+      ],
+      "@stream-io/video-react-native-sdk",
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "microphonePermission": "iChat uses the microphone for voice calls.",
+          "cameraPermission": "iChat uses the camera for video in calls."
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 24
+          }
+        }
+      ],
+      "expo-asset"
     ],
+    "extra": {
+      "pushWorkerUrl": "",
+      "webPushVapidKey": "",
+      "streamApiKey": ""
+    },
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true

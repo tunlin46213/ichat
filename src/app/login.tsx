@@ -61,6 +61,11 @@ export default function LoginScreen() {
           onSubmitEditing={onSubmit}
         />
       </FieldGroup>
+      <Link
+        href={{ pathname: '/forgot-password', params: email.trim() ? { email: email.trim() } : {} }}
+        style={styles.forgot}>
+        Forgot password?
+      </Link>
       <ErrorText message={error} />
       <PrimaryButton title="Log In" onPress={onSubmit} loading={loading} />
       <Text style={[styles.footer, { color: theme.textSecondary }]}>
@@ -76,4 +81,5 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   footer: { textAlign: 'center', fontSize: 15, marginTop: 8 },
   link: { color: Accent, fontWeight: '600' },
+  forgot: { color: Accent, fontSize: 15, alignSelf: 'flex-end', marginTop: -4 },
 });

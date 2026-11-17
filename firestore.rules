@@ -1,11 +1,21 @@
 rules_version = '2';
 
-// Paste this into Firebase console → Firestore Database → Rules → Publish.
+// Deploy: Firebase console → Firestore Database → Rules → paste → Publish
+// (or `firebase deploy --only firestore:rules`).
 service cloud.firestore {
   match /databases/{database}/documents {
 
     function signedIn() {
       return request.auth != null;
+    }
+
+    function blockList(uid) {
+      return /databases/$(database)/documents/blocks/$(uid);
+    }
+
+    // true if `uid` has blocked the current user
+    function blockedBy(uid) {
+      return exists(blockList(uid)) && request.auth.uid in get(blockList(uid)).data.blocked;
     }
 
     // Public profiles (no email). Any signed-in user can read them for the user list;
@@ -18,6 +28,24 @@ service cloud.firestore {
         && request.resource.data.name.size() > 0
         && request.resource.data.name.size() <= 40;
       allow delete: if signedIn() && request.auth.uid == userId;
+
+      // Private per-user data (push tokens). Only the owner; Cloud Functions bypass rules.
+      match /private/{docId} {
+        allow read, write: if signedIn() && request.auth.uid == userId;
+      }
+    }
+
+    // My block list. Private: only I can read or change it.
+    match /blocks/{userId} {
+      allow read, write: if signedIn() && request.auth.uid == userId;
+    }
+
+    // Abuse reports. Users can file them but never read them; review in the console.
+    match /reports/{reportId} {
+      allow create: if signedIn()
+        && request.resource.data.reporterId == request.auth.uid
+        && request.resource.data.reportedUserId is string
+        && request.resource.data.reason is string;
     }
 
     // 1:1 chats. chatId = the two user IDs sorted and joined with "_".
@@ -32,19 +60,84 @@ service cloud.firestore {
         && request.resource.data.members.size() == 2
         && request.auth.uid in request.resource.data.members
         && chatId == request.resource.data.members[0] + '_' + request.resource.data.members[1];
-      // Members may update lastMessage/updatedAt, but never change who is in the chat.
+      // Members may update previews, read markers, typing, etc., but never membership.
       allow update: if signedIn() && isMember()
         && request.resource.data.members == resource.data.members;
+
+      // Photos / voice notes as base64 (free-plan alternative to Cloud Storage).
+      // Written in the same batch as their message; never changed afterwards.
+      match /media/{mediaId} {
+        function members() {
+          return get(/databases/$(database)/documents/chats/$(chatId)).data.members;
+        }
+
+        allow read: if signedIn() && request.auth.uid in members();
+        allow create: if signedIn()
+          && request.auth.uid in members()
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.data is string
+          && request.resource.data.data.size() <= 950000
+          && request.resource.data.mime in ['image/jpeg', 'audio/mp4', 'audio/webm'];
+      }
 
       match /messages/{messageId} {
         function chatMembers() {
           return get(/databases/$(database)/documents/chats/$(chatId)).data.members;
         }
 
+        function otherMember() {
+          let m = chatMembers();
+          return m[0] == request.auth.uid ? m[1] : m[0];
+        }
+
+        function changed() {
+          return request.resource.data.diff(resource.data).affectedKeys();
+        }
+
+        function validText(text) {
+          return text is string && text.size() > 0 && text.size() <= 4000;
+        }
+
+        function validBody() {
+          let d = request.resource.data;
+          let type = d.get('type', 'text');
+          return (type == 'text' && validText(d.text))
+            || (type in ['image', 'audio']
+                && d.mediaId is string
+                // existsAfter: the media doc is created in the same batch.
+                && existsAfter(/databases/$(database)/documents/chats/$(chatId)/media/$(d.mediaId)));
+        }
+
         allow read: if signedIn() && request.auth.uid in chatMembers();
+
+        // Sender must be me, and the other person must not have blocked me.
         allow create: if signedIn()
           && request.auth.uid in chatMembers()
-          && request.resource.data.senderId == request.auth.uid;
+          && request.resource.data.senderId == request.auth.uid
+          && validBody()
+          && !blockedBy(otherMember());
+
+        allow update: if signedIn() && request.auth.uid in chatMembers() && (
+          // Reactions: each person may only add/change/remove their own.
+          (changed().hasOnly(['reactions'])
+            && request.resource.data.reactions
+                 .diff(resource.data.get('reactions', {}))
+                 .affectedKeys().hasOnly([request.auth.uid]))
+          ||
+          // Edit: the sender, text messages only, within 15 minutes of sending.
+          (resource.data.senderId == request.auth.uid
+            && changed().hasOnly(['text', 'editedAt'])
+            && resource.data.get('type', 'text') == 'text'
+            && !resource.data.get('deleted', false)
+            && validText(request.resource.data.text)
+            && request.time < resource.data.createdAt + duration.value(15, 'm'))
+          ||
+          // Unsend: only the sender, and only to blank the message.
+          (resource.data.senderId == request.auth.uid
+            && changed().hasOnly(['deleted', 'text', 'replyTo'])
+            && request.resource.data.deleted == true
+            && request.resource.data.text == '')
+        );
       }
     }
   }

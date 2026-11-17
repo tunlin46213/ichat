@@ -1,4 +1,5 @@
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon, type IconName } from '@/components/icon';
 import { Accent, Spacing } from '@/constants/theme';
@@ -11,8 +12,10 @@ export function LargeTitleHeader({ title, action, search }: {
   search?: { value: string; onChangeText: (text: string) => void; placeholder?: string };
 }) {
   const theme = useTheme();
+  // Below the iPhone status bar when opened from the home screen.
+  const { top } = useSafeAreaInsets();
   return (
-    <View style={styles.large}>
+    <View style={[styles.large, { paddingTop: top }]}>
       <View style={styles.topBar}>
         {action ? (
           <Pressable

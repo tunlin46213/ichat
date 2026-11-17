@@ -1,15 +1,24 @@
 import {
   createUserWithEmailAndPassword,
+  deleteUser,
+  EmailAuthProvider,
   onAuthStateChanged,
+  reauthenticateWithCredential,
+  sendEmailVerification,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signOut,
   updateProfile,
   type User,
 } from 'firebase/auth';
-import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { deleteDoc, doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { createContext, use, useEffect, useState, type ReactNode } from 'react';
+import { AppState } from 'react-native';
 
 import { auth, db } from '@/lib/firebase';
+import { registerForPush, unregisterPush } from '@/lib/push';
+
+const HEARTBEAT_MS = 60_000;
 
 type AuthContextValue = {
   user: User | null;
@@ -20,9 +29,26 @@ type AuthContextValue = {
   signIn: (email: string, password: string) => Promise<void>;
   register: (name: string, email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  updateName: (name: string) => Promise<void>;
+  /** Permanently deletes the account and profile. Needs the password to re-authenticate. */
+  deleteAccount: (password: string) => Promise<void>;
+  /** false until the user clicks the link in the verification email */
+  emailVerified: boolean;
+  resendVerification: () => Promise<void>;
+  /** Re-checks emailVerified with the server (after the user clicked the link). */
+  refreshUser: () => Promise<void>;
+  sendPasswordReset: (email: string) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+
+function writeProfile(uid: string, name: string) {
+  return setDoc(
+    doc(db, 'users', uid),
+    { name, nameLower: name.toLowerCase(), lastSeen: serverTimestamp() },
+    { merge: true }
+  );
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(auth.currentUser);
@@ -30,28 +56,53 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     auth.currentUser?.displayName ?? null
   );
   const [initializing, setInitializing] = useState(true);
+  const [emailVerified, setEmailVerified] = useState(auth.currentUser?.emailVerified ?? false);
 
   useEffect(() => {
     return onAuthStateChanged(auth, (u) => {
       setUser(u);
       setDisplayName(u?.displayName ?? null);
+      setEmailVerified(u?.emailVerified ?? false);
       setInitializing(false);
       // Repairs accounts whose profile write failed at sign-up (e.g. rules not yet
-      // published) and keeps lastSeen fresh. Right after register() the name is not
+      // published) and refreshes lastSeen. Right after register() the name is not
       // set yet; register() writes the profile itself in that case.
       if (u?.displayName) {
-        setDoc(
-          doc(db, 'users', u.uid),
-          {
-            name: u.displayName,
-            nameLower: u.displayName.toLowerCase(),
-            lastSeen: serverTimestamp(),
-          },
-          { merge: true }
-        ).catch((err) => console.warn('Could not update profile', err));
+        writeProfile(u.uid, u.displayName).catch((err) =>
+          console.warn('Could not update profile', err)
+        );
       }
     });
   }, []);
+
+  // Presence: refresh lastSeen every minute while the app is open, and when it
+  // returns to the foreground. Others show "Active now" if it is under 2 minutes old.
+  const uid = user?.uid;
+  useEffect(() => {
+    if (!uid) return;
+    // Ask for notification permission and save this device's push token.
+    registerForPush(uid);
+    const beat = () => {
+      if (AppState.currentState !== 'active') return;
+      setDoc(doc(db, 'users', uid), { lastSeen: serverTimestamp() }, { merge: true }).catch(
+        () => {}
+      );
+    };
+    const timer = setInterval(beat, HEARTBEAT_MS);
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      beat();
+      // Picks up email verification done in the mail app while we were away.
+      const current = auth.currentUser;
+      if (current && !current.emailVerified) {
+        current.reload().then(() => setEmailVerified(current.emailVerified), () => {});
+      }
+    });
+    return () => {
+      clearInterval(timer);
+      sub.remove();
+    };
+  }, [uid]);
 
   async function signIn(email: string, password: string) {
     await signInWithEmailAndPassword(auth, email.trim(), password);
@@ -69,17 +120,73 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       name: cleanName,
       nameLower: cleanName.toLowerCase(),
       avatarUrl: null,
+      acceptedTermsAt: serverTimestamp(),
       createdAt: serverTimestamp(),
       lastSeen: serverTimestamp(),
     });
+    // Not awaited: a slow or failed email must not block sign-up.
+    sendEmailVerification(cred.user).catch((err) =>
+      console.warn('Could not send verification email', err)
+    );
   }
 
   async function logout() {
+    if (auth.currentUser) await unregisterPush(auth.currentUser.uid);
     await signOut(auth);
   }
 
+  async function updateName(name: string) {
+    const current = auth.currentUser;
+    if (!current) return;
+    const cleanName = name.trim();
+    await updateProfile(current, { displayName: cleanName });
+    await writeProfile(current.uid, cleanName);
+    setDisplayName(cleanName);
+  }
+
+  async function resendVerification() {
+    if (auth.currentUser) await sendEmailVerification(auth.currentUser);
+  }
+
+  async function refreshUser() {
+    const current = auth.currentUser;
+    if (!current) return;
+    await current.reload();
+    setEmailVerified(current.emailVerified);
+  }
+
+  async function sendPasswordReset(email: string) {
+    await sendPasswordResetEmail(auth, email.trim());
+  }
+
+  async function deleteAccount(password: string) {
+    const current = auth.currentUser;
+    if (!current?.email) return;
+    // Firebase requires a recent sign-in before deleting an account.
+    await reauthenticateWithCredential(
+      current,
+      EmailAuthProvider.credential(current.email, password)
+    );
+    await deleteDoc(doc(db, 'users', current.uid));
+    await deleteUser(current);
+  }
+
   return (
-    <AuthContext value={{ user, displayName, initializing, signIn, register, logout }}>
+    <AuthContext
+      value={{
+        user,
+        displayName,
+        initializing,
+        signIn,
+        register,
+        logout,
+        updateName,
+        deleteAccount,
+        emailVerified,
+        resendVerification,
+        refreshUser,
+        sendPasswordReset,
+      }}>
       {children}
     </AuthContext>
   );
@@ -111,8 +218,14 @@ export function authErrorMessage(err: unknown): string {
       return 'Network error. Check your internet connection.';
     case 'auth/operation-not-allowed':
       return 'Email/Password sign-in is not enabled in the Firebase console.';
+    case 'auth/requires-recent-login':
+      return 'For security, please log out and log in again, then retry.';
+    case 'auth/missing-email':
+      return 'Enter your email address.';
+    case 'name-too-long':
+      return 'Name must be 40 characters or fewer.';
     case 'permission-denied':
-      return 'Account created, but saving the profile was blocked by Firestore rules.';
+      return 'This action was blocked by the database security rules.';
     default:
       return code ? `Something went wrong (${code}).` : 'Something went wrong.';
   }

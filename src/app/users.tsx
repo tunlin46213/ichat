@@ -10,6 +10,7 @@ import { SkeletonRows } from '@/components/skeleton';
 import { InlineSearch } from '@/components/web-header';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
+import { useBlocks } from '@/context/blocks';
 import { useTheme } from '@/hooks/use-theme';
 import { chatIdFor, type UserProfile } from '@/lib/chat';
 import { db } from '@/lib/firebase';
@@ -20,6 +21,7 @@ export default function UsersScreen() {
   const [users, setUsers] = useState<UserProfile[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const { blocked } = useBlocks();
   const myUid = user!.uid;
 
   useEffect(() => {
@@ -39,7 +41,8 @@ export default function UsersScreen() {
   }, [myUid]);
 
   const term = search.trim().toLowerCase();
-  const shown = users?.filter((u) => u.name.toLowerCase().includes(term)) ?? null;
+  const shown =
+    users?.filter((u) => !blocked.includes(u.id) && u.name.toLowerCase().includes(term)) ?? null;
 
   return (
     <>
@@ -94,7 +97,7 @@ export default function UsersScreen() {
               styles.row,
               pressed && { backgroundColor: theme.backgroundSelected },
             ]}>
-            <Avatar id={item.id} name={item.name} size={40} />
+            <Avatar id={item.id} name={item.name} size={40} uri={item.avatarUrl} />
             <View style={[styles.rowBody, { borderBottomColor: theme.separator }]}>
               <Text style={[styles.name, { color: theme.text }]} numberOfLines={1}>
                 {item.name}

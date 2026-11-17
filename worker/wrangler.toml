@@ -1,0 +1,11 @@
+name = "ichat-push"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+[vars]
+FIREBASE_PROJECT_ID = "ichat-2a37f"
+APP_URL = "https://ichat-2a37f.web.app"
+
+# Secrets (never commit them):
+#   npx wrangler secret put FIREBASE_SERVICE_ACCOUNT   ← paste the whole service-account JSON
+#   npx wrangler secret put STREAM_API_SECRET          ← optional, for voice calls

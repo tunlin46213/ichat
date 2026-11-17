@@ -2,6 +2,7 @@ import { Stack } from 'expo-router';
 import type { ComponentProps } from 'react';
 import { Platform, Pressable, StyleSheet, Text } from 'react-native';
 
+import { Icon, type IconName } from '@/components/icon';
 import { Accent } from '@/constants/theme';
 
 type ToolbarIcon = ComponentProps<typeof Stack.Toolbar.Button>['icon'];
@@ -21,8 +22,17 @@ export function HeaderAction({ placement, icon, label, onPress, bold }: {
 }) {
   if (Platform.OS === 'web') {
     const render = () => (
-      <Pressable onPress={onPress} hitSlop={10} style={styles.webButton}>
-        <Text style={[styles.webText, bold && styles.bold]}>{label}</Text>
+      <Pressable
+        onPress={onPress}
+        hitSlop={10}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        style={({ pressed }) => [styles.webButton, { opacity: pressed ? 0.5 : 1 }]}>
+        {icon ? (
+          <Icon name={icon as IconName} size={22} color={Accent} fallback={label} />
+        ) : (
+          <Text style={[styles.webText, bold && styles.bold]}>{label}</Text>
+        )}
       </Pressable>
     );
     return (
