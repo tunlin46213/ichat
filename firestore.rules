@@ -1,0 +1,51 @@
+rules_version = '2';
+
+// Paste this into Firebase console → Firestore Database → Rules → Publish.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Public profiles (no email). Any signed-in user can read them for the user list;
+    // only the owner can create or change their own profile.
+    match /users/{userId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 40;
+      allow delete: if signedIn() && request.auth.uid == userId;
+    }
+
+    // 1:1 chats. chatId = the two user IDs sorted and joined with "_".
+    match /chats/{chatId} {
+      function isMember() {
+        return request.auth.uid in resource.data.members;
+      }
+
+      allow read: if signedIn() && isMember();
+      allow create: if signedIn()
+        && request.resource.data.members is list
+        && request.resource.data.members.size() == 2
+        && request.auth.uid in request.resource.data.members
+        && chatId == request.resource.data.members[0] + '_' + request.resource.data.members[1];
+      // Members may update lastMessage/updatedAt, but never change who is in the chat.
+      allow update: if signedIn() && isMember()
+        && request.resource.data.members == resource.data.members;
+
+      match /messages/{messageId} {
+        function chatMembers() {
+          return get(/databases/$(database)/documents/chats/$(chatId)).data.members;
+        }
+
+        allow read: if signedIn() && request.auth.uid in chatMembers();
+        allow create: if signedIn()
+          && request.auth.uid in chatMembers()
+          && request.resource.data.senderId == request.auth.uid;
+      }
+    }
+  }
+}
