@@ -23,6 +23,7 @@ const SF_TO_IONICONS: Record<string, IoniconName> = {
   checkmark: 'checkmark',
   phone: 'call-outline',
   'phone.fill': 'call',
+  video: 'videocam-outline',
   'arrowshape.turn.up.left': 'arrow-undo-outline',
   'doc.on.doc': 'copy-outline',
   'arrow.uturn.backward.circle': 'arrow-undo-circle-outline',

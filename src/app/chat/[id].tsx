@@ -25,7 +25,7 @@ import { Composer } from '@/components/chat/composer';
 import { MessageBubble } from '@/components/chat/message-bubble';
 import { MessageMenu } from '@/components/chat/message-menu';
 import { TypingBubble } from '@/components/chat/typing-bubble';
-import { HeaderAction } from '@/components/header-action';
+import { HeaderActions } from '@/components/header-action';
 import { Icon } from '@/components/icon';
 import { ListMessage } from '@/components/list-states';
 import { WebBackButton } from '@/components/web-header';
@@ -215,19 +215,19 @@ export default function ChatScreen() {
     }
   }
 
-  // ── Voice call ──
-  async function call() {
+  // ── Voice / video calls ──
+  async function call(video = false) {
     if (!startCall) {
-      showAlert('Voice calls', callsUnavailableReason() ?? 'Voice calls are connecting. Try again in a moment.');
+      showAlert(video ? 'Video calls' : 'Voice calls', callsUnavailableReason() ?? 'Calls are connecting. Try again in a moment.');
       return;
     }
     if (iBlocked) {
-      showAlert('Voice calls', `Unblock ${otherName} to call them.`);
+      showAlert(video ? 'Video calls' : 'Voice calls', `Unblock ${otherName} to call them.`);
       return;
     }
     try {
       haptics.medium();
-      await startCall({ id: otherId, name: otherName });
+      await startCall({ id: otherId, name: otherName }, { video });
     } catch {
       haptics.error();
       showAlert('Call failed', 'Could not start the call. Check your connection and try again.');
@@ -385,7 +385,13 @@ export default function ChatScreen() {
           }),
         }}
       />
-      <HeaderAction placement="right" icon="phone" label="Voice call" onPress={call} />
+      <HeaderActions
+        placement="right"
+        buttons={[
+          { icon: 'video', label: 'Video call', onPress: () => call(true) },
+          { icon: 'phone', label: 'Voice call', onPress: () => call(false) },
+        ]}
+      />
 
       <OfflineBanner />
       {!validChat ? (

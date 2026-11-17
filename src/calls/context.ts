@@ -1,8 +1,10 @@
 import { createContext, use } from 'react';
 
 export type CallsContextValue = {
-  /** Starts a ringing audio call. null when calls are unavailable on this runtime. */
-  startCall: ((other: { id: string; name: string }) => Promise<void>) | null;
+  /** Starts a ringing voice (default) or video call. null when calls are unavailable here. */
+  startCall:
+    | ((other: { id: string; name: string }, options?: { video?: boolean }) => Promise<void>)
+    | null;
 };
 
 export const CallsContext = createContext<CallsContextValue>({ startCall: null });

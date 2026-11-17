@@ -24,8 +24,8 @@ export const webPushVapidKey: string | undefined =
 export const callsSupported = Platform.OS !== 'web' && !isExpoGo && !!streamApiKey;
 
 export function callsUnavailableReason() {
-  if (Platform.OS === 'web') return 'Voice calls are available in the iPhone app.';
-  if (isExpoGo) return 'Voice calls need the iChat development build. They are not available in Expo Go.';
-  if (!streamApiKey) return 'Voice calls are not set up yet (missing Stream API key).';
+  if (Platform.OS === 'web') return 'Voice and video calls are available in the iPhone app.';
+  if (isExpoGo) return 'Calls need the iChat app build. They are not available in Expo Go.';
+  if (!streamApiKey) return 'Calls are not set up yet (missing Stream API key).';
   return null;
 }

@@ -85,9 +85,9 @@
       "expo-asset"
     ],
     "extra": {
-      "pushWorkerUrl": "",
+      "pushWorkerUrl": "https://ichat-push.tunlin-tlin-ac2.workers.dev",
       "webPushVapidKey": "",
-      "streamApiKey": ""
+      "streamApiKey": "uc5wwkmp728q"
     },
     "experiments": {
       "typedRoutes": true,

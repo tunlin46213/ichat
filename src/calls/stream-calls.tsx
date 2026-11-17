@@ -54,14 +54,16 @@ export function StreamCallsProvider({ children }: { children: ReactNode }) {
     };
   }, [uid, name, image]);
 
-  async function startCall(other: { id: string; name: string }) {
+  async function startCall(other: { id: string; name: string }, { video = false } = {}) {
     if (!client || !uid) throw new Error('Calls are not connected yet.');
     const call = client.call('default', newCallId());
-    // Voice only: no camera, and the ringing shows as an audio call.
-    await call.camera.disable();
+    // Voice calls keep the camera off and ring as an audio call; video calls
+    // start with the front camera on.
+    if (video) await call.camera.enable();
+    else await call.camera.disable();
     await call.getOrCreate({
       ring: true,
-      video: false,
+      video,
       data: { members: [{ user_id: uid }, { user_id: other.id }] },
     });
   }
