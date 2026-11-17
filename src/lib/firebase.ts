@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getApp, getApps, initializeApp } from 'firebase/app';
 import * as firebaseAuth from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { getFirestore, initializeFirestore, type Firestore } from 'firebase/firestore';
 import { Platform } from 'react-native';
 
 // Web app config from the Firebase console. These values are public by design;
@@ -33,5 +33,18 @@ function createAuth(): firebaseAuth.Auth {
   });
 }
 
+function createDb(): Firestore {
+  if (!isFirstInit) return getFirestore(app);
+  // Firestore's default streaming transport (WebChannel) often fails to connect in
+  // React Native and behind some proxies, leaving the client stuck "offline".
+  // Long polling works everywhere; on web let the SDK detect when it is needed.
+  return initializeFirestore(
+    app,
+    Platform.OS === 'web'
+      ? { experimentalAutoDetectLongPolling: true }
+      : { experimentalForceLongPolling: true }
+  );
+}
+
 export const auth = createAuth();
-export const db = getFirestore(app);
+export const db = createDb();

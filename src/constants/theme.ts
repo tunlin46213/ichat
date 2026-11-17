@@ -14,6 +14,11 @@ export const Colors = {
     backgroundElement: '#F0F0F3',
     backgroundSelected: '#E0E1E6',
     textSecondary: '#60646C',
+    // iOS system palette (grouped lists, cards, hairlines, incoming bubbles)
+    groupedBackground: '#F2F2F7',
+    card: '#FFFFFF',
+    separator: '#C6C6C8',
+    bubbleIncoming: '#E9E9EB',
   },
   dark: {
     text: '#ffffff',
@@ -21,6 +26,10 @@ export const Colors = {
     backgroundElement: '#212225',
     backgroundSelected: '#2E3135',
     textSecondary: '#B0B4BA',
+    groupedBackground: '#000000',
+    card: '#1C1C1E',
+    separator: '#38383A',
+    bubbleIncoming: '#26252A',
   },
 } as const;
 

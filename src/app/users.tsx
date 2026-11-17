@@ -1,10 +1,13 @@
-import { router } from 'expo-router';
+import { router, Stack } from 'expo-router';
 import { collection, onSnapshot, orderBy, query } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Avatar } from '@/components/avatar';
+import { HeaderAction } from '@/components/header-action';
 import { ListMessage } from '@/components/list-states';
+import { SkeletonRows } from '@/components/skeleton';
+import { InlineSearch } from '@/components/web-header';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useTheme } from '@/hooks/use-theme';
@@ -39,64 +42,85 @@ export default function UsersScreen() {
   const shown = users?.filter((u) => u.name.toLowerCase().includes(term)) ?? null;
 
   return (
-    <View style={[styles.flex, { backgroundColor: theme.background }]}>
-      <View style={styles.searchWrap}>
-        <TextInput
-          value={search}
-          onChangeText={setSearch}
-          placeholder="Search by name"
-          placeholderTextColor={theme.textSecondary}
-          autoCorrect={false}
-          clearButtonMode="while-editing"
-          style={[styles.search, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-        />
-      </View>
-      {shown === null || shown.length === 0 ? (
-        <ListMessage
-          loading={shown === null && !error}
-          error={error}
-          empty={term ? 'No one matches that name.' : 'No other users yet.'}
-        />
-      ) : (
-        <FlatList
-          data={shown}
-          keyExtractor={(u) => u.id}
-          keyboardShouldPersistTaps="handled"
-          renderItem={({ item }) => (
-            <Pressable
-              onPress={() =>
-                // Replace so "back" from the chat returns to the chat list, not here.
-                router.replace({
-                  pathname: '/chat/[id]',
-                  params: { id: chatIdFor(myUid, item.id), otherId: item.id, name: item.name },
-                })
-              }
-              style={({ pressed }) => [
-                styles.row,
-                pressed && { backgroundColor: theme.backgroundElement },
-              ]}>
-              <Avatar id={item.id} name={item.name} size={40} />
-              <View style={[styles.rowBody, { borderBottomColor: theme.backgroundSelected }]}>
-                <Text style={[styles.name, { color: theme.text }]} numberOfLines={1}>
-                  {item.name}
-                </Text>
-              </View>
-            </Pressable>
-          )}
-        />
-      )}
-    </View>
+    <>
+      <HeaderAction placement="left" label="Cancel" onPress={() => router.back()} />
+      <Stack.SearchBar
+        placeholder="Search people"
+        hideWhenScrolling={false}
+        onChangeText={(e) => setSearch(e.nativeEvent.text)}
+        onCancelButtonPress={() => setSearch('')}
+      />
+      <FlatList
+        style={{ backgroundColor: theme.background }}
+        data={shown ?? []}
+        keyExtractor={(u) => u.id}
+        contentInsetAdjustmentBehavior="automatic"
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        contentContainerStyle={shown?.length ? undefined : styles.emptyContainer}
+        ListHeaderComponent={
+          <>
+            {/* Web has no native header search bar; renders nothing on iOS. */}
+            <View style={Platform.OS === 'web' ? styles.webSearch : undefined}>
+              <InlineSearch value={search} onChangeText={setSearch} placeholder="Search people" />
+            </View>
+            {shown?.length ? (
+              <Text style={[styles.sectionHeader, { color: theme.textSecondary }]}>
+                {term ? 'RESULTS' : 'PEOPLE ON ICHAT'}
+              </Text>
+            ) : null}
+          </>
+        }
+        ListEmptyComponent={
+          shown === null && !error ? (
+            <SkeletonRows count={8} avatarSize={40} lines={1} />
+          ) : (
+            <ListMessage
+              error={error}
+              empty={term ? 'No one matches that name.' : 'No other users yet.\nAsk a friend to register.'}
+            />
+          )
+        }
+        renderItem={({ item }) => (
+          <Pressable
+            onPress={() =>
+              // Replace the sheet with the chat, so "back" from the chat returns to the list.
+              router.replace({
+                pathname: '/chat/[id]',
+                params: { id: chatIdFor(myUid, item.id), otherId: item.id, name: item.name },
+              })
+            }
+            style={({ pressed }) => [
+              styles.row,
+              pressed && { backgroundColor: theme.backgroundSelected },
+            ]}>
+            <Avatar id={item.id} name={item.name} size={40} />
+            <View style={[styles.rowBody, { borderBottomColor: theme.separator }]}>
+              <Text style={[styles.name, { color: theme.text }]} numberOfLines={1}>
+                {item.name}
+              </Text>
+            </View>
+          </Pressable>
+        )}
+      />
+    </>
   );
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1 },
-  searchWrap: { padding: Spacing.three, paddingBottom: Spacing.two },
-  search: { fontSize: 16, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 },
+  emptyContainer: { flexGrow: 1 },
+  webSearch: { paddingHorizontal: Spacing.three, paddingTop: Spacing.two },
+  sectionHeader: {
+    fontSize: 13,
+    paddingHorizontal: Spacing.three,
+    paddingTop: Spacing.three,
+    paddingBottom: Spacing.two,
+  },
   row: { flexDirection: 'row', alignItems: 'center', paddingLeft: Spacing.three, gap: 12 },
   rowBody: {
     flex: 1,
-    paddingVertical: 14,
+    minHeight: 56,
+    justifyContent: 'center',
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   name: { fontSize: 17 },

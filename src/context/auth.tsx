@@ -36,6 +36,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(u);
       setDisplayName(u?.displayName ?? null);
       setInitializing(false);
+      // Repairs accounts whose profile write failed at sign-up (e.g. rules not yet
+      // published) and keeps lastSeen fresh. Right after register() the name is not
+      // set yet; register() writes the profile itself in that case.
+      if (u?.displayName) {
+        setDoc(
+          doc(db, 'users', u.uid),
+          {
+            name: u.displayName,
+            nameLower: u.displayName.toLowerCase(),
+            lastSeen: serverTimestamp(),
+          },
+          { merge: true }
+        ).catch((err) => console.warn('Could not update profile', err));
+      }
     });
   }, []);
 
