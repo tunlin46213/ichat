@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon, type IconName } from '@/components/icon';
-import { Accent, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 /** iOS large-title header for the browser: big bold title, optional action and search field. */
@@ -28,7 +28,7 @@ export function LargeTitleHeader({ title, action, search, leading }: {
             accessibilityLabel={action.label}
             hitSlop={10}
             style={({ pressed }) => [styles.actionButton, { opacity: pressed ? 0.5 : 1 }]}>
-            <Icon name={action.icon} size={24} color={Accent} fallback={action.label} />
+            <Icon name={action.icon} size={24} color={theme.accent} fallback={action.label} />
           </Pressable>
         ) : null}
       </View>
@@ -46,7 +46,7 @@ export function InlineSearch({ value, onChangeText, placeholder = 'Search' }: {
 }) {
   const theme = useTheme();
   return (
-    <View style={[styles.search, { backgroundColor: theme.backgroundElement }]}>
+    <View style={[styles.search, { backgroundColor: theme.glassStrong, borderColor: theme.glassBorder, borderWidth: StyleSheet.hairlineWidth }]}>
       <Icon name="magnifyingglass" size={17} color={theme.textSecondary} fallback="" />
       <TextInput
         value={value}
@@ -67,14 +67,15 @@ export function InlineSearch({ value, onChangeText, placeholder = 'Search' }: {
 
 /** iOS back button: chevron plus the previous screen's title. */
 export function WebBackButton({ label, onPress }: { label: string; onPress: () => void }) {
+  const theme = useTheme();
   return (
     <Pressable
       onPress={onPress}
       hitSlop={10}
       accessibilityRole="button"
       style={({ pressed }) => [styles.back, { opacity: pressed ? 0.5 : 1 }]}>
-      <Icon name="chevron.left" size={24} color={Accent} fallback="‹" />
-      <Text style={styles.backText}>{label}</Text>
+      <Icon name="chevron.left" size={24} color={theme.accent} fallback="‹" />
+      <Text style={[styles.backText, { color: theme.accent }]}>{label}</Text>
     </Pressable>
   );
 }
@@ -94,5 +95,5 @@ const styles = StyleSheet.create({
   },
   searchInput: { flex: 1, fontSize: 17, outlineStyle: 'none' } as object,
   back: { flexDirection: 'row', alignItems: 'center', marginLeft: 4 },
-  backText: { color: Accent, fontSize: 17, marginLeft: -2 },
+  backText: { fontSize: 17, marginLeft: -2 },
 });

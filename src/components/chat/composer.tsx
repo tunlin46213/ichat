@@ -30,6 +30,8 @@ import Animated, {
   withRepeat,
   withSpring,
   withTiming,
+  ZoomIn,
+  ZoomOut,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -39,6 +41,7 @@ import { useAppearance } from '@/context/appearance';
 import { useKeyboardVisible } from '@/hooks/use-keyboard-visible';
 import { useTheme } from '@/hooks/use-theme';
 import type { ReplyRef } from '@/lib/chat';
+import { getDraft, setDraft as saveDraft } from '@/lib/drafts';
 import { haptics } from '@/lib/haptics';
 import { MAX_VOICE_MS } from '@/lib/media';
 
@@ -119,6 +122,8 @@ export function Composer({
   onAttach,
   onVoice,
   busyLabel,
+  draftKey,
+  onActivity,
 }: {
   enabled: boolean;
   initialText?: string;
@@ -136,14 +141,24 @@ export function Composer({
   onVoice: (uri: string, durationMs: number, waveform: number[]) => void;
   /** e.g. "Sending photo…" while an upload is in progress */
   busyLabel: string | null;
+  /** chat id: unsent text is kept as a draft for it (not while editing) */
+  draftKey?: string;
+  /** "recording" while a voice note is being recorded, null when it ends */
+  onActivity?: (kind: 'recording' | null) => void;
 }) {
   const theme = useTheme();
-  const { bubbleColor } = useAppearance();
+  const { bubbleColor, textScale } = useAppearance();
   const insets = useSafeAreaInsets();
   const keyboardVisible = useKeyboardVisible();
   const inputRef = useRef<ComponentRef<typeof TextInput>>(null);
   const lastSignal = useRef(0);
-  const [draft, setDraft] = useState(initialText);
+  const [draft, setDraftState] = useState(() =>
+    editing || !draftKey ? initialText : initialText || getDraft(draftKey)
+  );
+  function setDraft(text: string) {
+    setDraftState(text);
+    if (draftKey && !editing) saveDraft(draftKey, text);
+  }
   const [sending, setSending] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
@@ -239,6 +254,7 @@ export function Composer({
       lastSampleAt.current = -1;
       recorder.record();
       started.current = true;
+      onActivity?.('recording');
       haptics.medium();
     } catch {
       holding.current = false;
@@ -262,6 +278,7 @@ export function Composer({
 
   async function finishRecording(sendIt: boolean) {
     const duration = recState.durationMillis;
+    onActivity?.(null);
     try {
       await recorder.stop();
     } finally {
@@ -413,28 +430,33 @@ export function Composer({
                 maxLength={4000}
                 editable={enabled}
                 accessibilityLabel="Message"
-                style={[styles.input, { color: theme.text }, editing && styles.inputEditing]}
+                style={[styles.input, { color: theme.text, fontSize: 17 * textScale }, editing && styles.inputEditing]}
               />
             </>
           )}
+          {/* Mic and Send swap with a little spin as text appears / disappears. */}
           {showMic ? (
-            <GestureDetector gesture={hold}>
-              <View
-                accessible
-                accessibilityRole="button"
-                accessibilityLabel="Hold to record a voice message"
-                hitSlop={8}>
-                <MicButton recording={recording} willCancel={willCancel} color={bubbleColor} />
-              </View>
-            </GestureDetector>
+            <Animated.View key="mic" entering={MORPH_IN} exiting={MORPH_OUT}>
+              <GestureDetector gesture={hold}>
+                <View
+                  accessible
+                  accessibilityRole="button"
+                  accessibilityLabel="Hold to record a voice message"
+                  hitSlop={8}>
+                  <MicButton recording={recording} willCancel={willCancel} color={bubbleColor} />
+                </View>
+              </GestureDetector>
+            </Animated.View>
           ) : (
-            <SendButton
-              active={canSend}
-              onPress={send}
-              icon={editing ? 'checkmark' : 'arrow.up'}
-              label={editing ? 'Save edit' : 'Send'}
-              color={bubbleColor}
-            />
+            <Animated.View key="send" entering={MORPH_IN} exiting={MORPH_OUT}>
+              <SendButton
+                active={canSend}
+                onPress={send}
+                icon={editing ? 'checkmark' : 'arrow.up'}
+                label={editing ? 'Save edit' : 'Send'}
+                color={bubbleColor}
+              />
+            </Animated.View>
           )}
         </Glass>
       </View>
@@ -494,6 +516,23 @@ function RecordingStrip({ durationMs, willCancel, slideX }: {
 }
 
 /** Mic in the input; grows into a big colored circle while held. */
+/** Pops in with a quarter turn (custom animations aren't supported on web: plain zoom there). */
+function MorphIn() {
+  'worklet';
+  return {
+    initialValues: { opacity: 0, transform: [{ scale: 0.4 }, { rotate: '-90deg' }] },
+    animations: {
+      opacity: withTiming(1, { duration: 120 }),
+      transform: [
+        { scale: withSpring(1, { damping: 12, stiffness: 260 }) },
+        { rotate: withSpring('0deg', { damping: 14, stiffness: 220 }) },
+      ],
+    },
+  };
+}
+const MORPH_IN = Platform.OS === 'web' ? ZoomIn.duration(160) : MorphIn;
+const MORPH_OUT = ZoomOut.duration(110);
+
 function MicButton({ recording, willCancel, color }: {
   recording: boolean;
   willCancel: boolean;

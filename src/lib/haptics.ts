@@ -14,6 +14,8 @@ export const haptics = {
   light: () => run(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)),
   /** medium tap: a swipe action snapping open */
   medium: () => run(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)),
+  /** tick: switching tabs / segments */
+  selection: () => run(() => Haptics.selectionAsync()),
   success: () => run(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)),
   warning: () => run(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning)),
   error: () => run(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)),

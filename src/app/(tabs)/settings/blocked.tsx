@@ -2,7 +2,7 @@ import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Avatar } from '@/components/avatar';
 import { ListMessage } from '@/components/list-states';
-import { Accent, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
 import { useBlocks } from '@/context/blocks';
 import { useTheme } from '@/hooks/use-theme';
 import { useUserProfile } from '@/hooks/use-user-profile';
@@ -55,7 +55,7 @@ function BlockedRow({ uid, first, last }: { uid: string; first: boolean; last: b
           onPress={() => unblock(uid).then(() => haptics.success(), () => haptics.error())}
           hitSlop={8}
           accessibilityRole="button">
-          <Text style={styles.unblock}>Unblock</Text>
+          <Text style={[styles.unblock, { color: theme.accent }]}>Unblock</Text>
         </Pressable>
       </View>
     </View>
@@ -76,6 +76,6 @@ const styles = StyleSheet.create({
     paddingRight: Spacing.three,
   },
   name: { flex: 1, fontSize: 17 },
-  unblock: { color: Accent, fontSize: 16, fontWeight: '600' },
+  unblock: { fontSize: 16, fontWeight: '600' },
   footer: { fontSize: 13, marginTop: Spacing.two, marginHorizontal: Spacing.three },
 });

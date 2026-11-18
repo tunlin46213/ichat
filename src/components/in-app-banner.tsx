@@ -6,6 +6,7 @@ import Animated, { SlideInUp, SlideOutUp } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
+import { useAppearance } from '@/context/appearance';
 import { useAuth } from '@/context/auth';
 import { useBlocks } from '@/context/blocks';
 import { useChats } from '@/context/chats';
@@ -42,12 +43,19 @@ export function InAppBanner() {
   const [banner, setBanner] = useState<Banner | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const myUid = user?.uid;
+  // Read through a ref so changing a mute doesn't resubscribe.
+  const { chatPrefs } = useAppearance();
+  const prefsRef = useRef(chatPrefs);
+  useEffect(() => {
+    prefsRef.current = chatPrefs;
+  });
 
   useEffect(() => {
     if (!myUid) return;
     const unsubscribe = onIncoming((chat: Chat) => {
       const otherId = otherMemberId(chat, myUid);
       if (chat.id === getActiveChat() || blocked.includes(otherId)) return;
+      if (prefsRef.current(chat.id).muted) return;
       if ((chat.unread?.[myUid] ?? 0) === 0) return; // already read on another device
       setBanner({
         key: Date.now(),

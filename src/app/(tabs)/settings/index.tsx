@@ -12,11 +12,13 @@ import {
   View,
 } from 'react-native';
 
+import { toast } from '@/components/toast';
 import { ActionSheet } from '@/components/action-sheet';
 import { Avatar } from '@/components/avatar';
+import { AuroraBackground } from '@/components/aurora';
 import { Icon, type IconName } from '@/components/icon';
 import { LargeTitleHeader } from '@/components/web-header';
-import { Spacing } from '@/constants/theme';
+import { Elevation, Radius, Spacing, Type } from '@/constants/theme';
 import { useAppearance } from '@/context/appearance';
 import { authErrorMessage, useAuth } from '@/context/auth';
 import { useBlocks } from '@/context/blocks';
@@ -86,12 +88,9 @@ export default function SettingsScreen() {
       if (!image) return;
       setUploading(true);
       await updateAvatar(user!.uid, image);
-      haptics.success();
+      toast.success('Profile photo updated', 'person.crop.circle');
     } catch (err) {
-      haptics.error();
-      const message = mediaErrorMessage(err);
-      if (Platform.OS === 'web') window.alert(message);
-      else Alert.alert('Photo not updated', message);
+      toast.error(mediaErrorMessage(err));
     } finally {
       setUploading(false);
     }
@@ -149,8 +148,10 @@ export default function SettingsScreen() {
   }
 
   return (
+    <View style={styles.flex}>
+    <AuroraBackground />
     <ScrollView
-      style={{ backgroundColor: theme.groupedBackground }}
+      style={styles.transparent}
       contentInsetAdjustmentBehavior="automatic"
       contentContainerStyle={styles.content}>
       {Platform.OS === 'web' ? (
@@ -160,7 +161,7 @@ export default function SettingsScreen() {
       ) : null}
 
       {/* Profile hero: gradient cover, photo (camera button changes it), name, email. */}
-      <View style={[styles.card, styles.hero, { backgroundColor: theme.card }]}>
+      <View style={[styles.card, styles.hero, { backgroundColor: theme.glassCard, borderColor: theme.glassBorder }]}>
         <View
           style={[
             styles.cover,
@@ -302,6 +303,7 @@ export default function SettingsScreen() {
         ]}
       />
     </ScrollView>
+    </View>
   );
 }
 
@@ -314,7 +316,7 @@ function Section({ title, footer, children }: {
   return (
     <View>
       <Text style={[styles.sectionHeader, { color: theme.textSecondary }]}>{title}</Text>
-      <View style={[styles.card, { backgroundColor: theme.card }]}>{children}</View>
+      <View style={[styles.card, { backgroundColor: theme.glassCard, borderColor: theme.glassBorder }]}>{children}</View>
       {footer ? (
         <Text style={[styles.sectionFooter, { color: theme.textSecondary }]}>{footer}</Text>
       ) : null}
@@ -363,7 +365,9 @@ const styles = StyleSheet.create({
   content: { padding: Spacing.three, gap: Spacing.two, paddingBottom: Spacing.six },
   // LargeTitleHeader has its own side padding; cancel the list's so titles line up.
   webHeader: { marginHorizontal: -Spacing.three, marginTop: -Spacing.three },
-  card: { borderRadius: 12, overflow: 'hidden' },
+  flex: { flex: 1 },
+  transparent: { backgroundColor: 'transparent' },
+  card: { borderRadius: Radius.lg, borderWidth: StyleSheet.hairlineWidth, boxShadow: Elevation.card, overflow: 'hidden' },
   hero: {
     alignItems: 'center',
     paddingBottom: Spacing.four,
@@ -400,7 +404,7 @@ const styles = StyleSheet.create({
   },
   profileName: { fontSize: 24, fontWeight: '700', letterSpacing: -0.3, flexShrink: 1 },
   profileEmail: { fontSize: 15 },
-  sectionHeader: { fontSize: 13, marginTop: Spacing.three, marginBottom: 6, marginLeft: Spacing.three },
+  sectionHeader: { ...Type.footnote, letterSpacing: 0.2, marginTop: Spacing.three, marginBottom: 6, marginLeft: Spacing.three },
   sectionFooter: { fontSize: 13, lineHeight: 18, marginTop: 6, marginHorizontal: Spacing.three },
   cell: { flexDirection: 'row', alignItems: 'center', paddingLeft: Spacing.three, gap: 12 },
   cellIcon: {

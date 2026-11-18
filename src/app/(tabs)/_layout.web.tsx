@@ -1,11 +1,11 @@
 import type { Href } from 'expo-router';
 import { TabList, TabSlot, Tabs, TabTrigger, type TabTriggerSlotProps } from 'expo-router/ui';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import Animated, { ZoomIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CountBadge } from '@/components/badge';
 import { Icon, type IconName } from '@/components/icon';
-import { Accent } from '@/constants/theme';
 import { useChats } from '@/context/chats';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -23,8 +23,10 @@ export default function TabsLayout() {
         style={[
           styles.bar,
           {
-            backgroundColor: theme.groupedBackground,
-            borderTopColor: theme.separator,
+            // Frosted glass bar, like iOS.
+            backgroundColor: theme.scheme === 'dark' ? 'rgba(18,18,22,0.72)' : 'rgba(255,255,255,0.72)',
+            backdropFilter: 'blur(20px) saturate(180%)',
+            borderTopColor: theme.glassHairline,
             // Room for the home indicator, like on iPhone.
             paddingBottom: Math.max(bottom, 8),
           },
@@ -56,11 +58,15 @@ function TabButton({ label, icon, activeIcon, badge = 0, isFocused, ...props }: 
   activeIcon: IconName;
   badge?: number;
 }) {
-  const color = isFocused ? Accent : '#8E8E93';
+  const theme = useTheme();
+  const color = isFocused ? theme.accent : '#8E8E93';
   return (
     <Pressable {...props} accessibilityRole="tab" style={styles.tab}>
       <View style={styles.tabInner}>
-        <Icon name={isFocused ? activeIcon : icon} size={25} color={color} fallback="•" />
+        {/* Re-keyed so the icon bounces when its tab is selected. */}
+        <Animated.View key={isFocused ? 'on' : 'off'} entering={isFocused ? ZoomIn.springify().damping(9) : undefined}>
+          <Icon name={isFocused ? activeIcon : icon} size={25} color={color} fallback="•" />
+        </Animated.View>
         <Text style={[styles.tabLabel, { color }]}>{label}</Text>
         <CountBadge count={badge} color="#FF3B30" style={styles.badge} />
       </View>

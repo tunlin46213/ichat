@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Icon } from '@/components/icon';
-import { Accent } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { loadMediaUri } from '@/lib/media';
 
@@ -33,12 +32,14 @@ const MAX_W = 240;
 const MAX_H = 320;
 
 /** Photo inside a chat bubble, sized to its aspect ratio. Tap for the full-screen viewer. */
-export function ImageContent({ chatId, mediaId, mime, width, height, onLongPress, onOpen }: {
+export function ImageContent({ chatId, mediaId, mime, width, height, thumb, onLongPress, onOpen }: {
   chatId: string;
   mediaId: string;
   mime: string;
   width?: number;
   height?: number;
+  /** tiny preview shown blurred until the full photo arrives */
+  thumb?: string;
   onLongPress: () => void;
   onOpen: () => void;
 }) {
@@ -64,10 +65,18 @@ export function ImageContent({ chatId, mediaId, mime, width, height, onLongPress
         ) : (
           <View
             style={[styles.placeholder, { width: w, height: h, backgroundColor: theme.backgroundElement }]}>
+            {thumb && !failed ? (
+              <Image
+                source={{ uri: `data:image/jpeg;base64,${thumb}` }}
+                style={StyleSheet.absoluteFill}
+                contentFit="cover"
+                blurRadius={14}
+              />
+            ) : null}
             {failed ? (
               <Text style={{ color: theme.textSecondary }}>Photo unavailable</Text>
             ) : (
-              <ActivityIndicator />
+              <ActivityIndicator color={thumb ? '#fff' : undefined} />
             )}
           </View>
         )}
@@ -156,7 +165,7 @@ export function AudioContent({ chatId, mediaId, mime, durationMs, waveform, mine
         accessibilityRole="button"
         accessibilityLabel={status.playing ? 'Pause voice message' : 'Play voice message'}
         disabled={!uri}
-        style={[styles.play, { backgroundColor: mine ? 'rgba(255,255,255,0.25)' : Accent }]}>
+        style={[styles.play, { backgroundColor: mine ? 'rgba(255,255,255,0.25)' : theme.accent }]}>
         {uri ? (
           <Icon name={status.playing ? 'pause.fill' : 'play.fill'} size={14} color="#fff" fallback={status.playing ? '❚❚' : '▶'} />
         ) : failed ? (
@@ -191,7 +200,7 @@ export function AudioContent({ chatId, mediaId, mime, durationMs, waveform, mine
 }
 
 const styles = StyleSheet.create({
-  placeholder: { borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  placeholder: { borderRadius: 16, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   failed: { color: '#fff', fontWeight: '700' },
   audio: { flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 210 },
   play: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },

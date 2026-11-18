@@ -14,30 +14,35 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  useColorScheme,
   View,
+  type ListViewToken,
 } from 'react-native';
-import Animated, { FadeIn, ZoomIn, ZoomOut } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeOut, ZoomIn, ZoomOut } from 'react-native-reanimated';
 
 import { ActionSheet, afterModalClose } from '@/components/action-sheet';
-import { Avatar } from '@/components/avatar';
+import { Avatar, colorsFor } from '@/components/avatar';
 import { useCalls } from '@/calls/context';
 import { OfflineBanner } from '@/components/banners';
 import { ChatHeaderTitle } from '@/components/chat/chat-header-title';
 import { Composer } from '@/components/chat/composer';
 import { MessageBubble } from '@/components/chat/message-bubble';
-import { MessageMenu } from '@/components/chat/message-menu';
+import { ScreenEffect } from '@/components/chat/screen-effect';
+import { SmartReplies } from '@/components/chat/smart-replies';
+import { MessageMenu, type MenuAnchor } from '@/components/chat/message-menu';
 import { PhotoViewer } from '@/components/chat/photo-viewer';
 import { ReactionsSheet } from '@/components/chat/reactions-sheet';
 import { TypingBubble } from '@/components/chat/typing-bubble';
 import { HeaderActions } from '@/components/header-action';
 import { Icon } from '@/components/icon';
+import { toast } from '@/components/toast';
 import { ListMessage } from '@/components/list-states';
 import { WebBackButton } from '@/components/web-header';
 import { Spacing } from '@/constants/theme';
-import { useAppearance, wallpaperGradient } from '@/context/appearance';
+import { ChatAppearanceScope, useAppearance, wallpaperGradient } from '@/context/appearance';
 import { useAuth } from '@/context/auth';
 import { useBlocks } from '@/context/blocks';
+import { useChats } from '@/context/chats';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useNow } from '@/hooks/use-now';
 import { useTheme } from '@/hooks/use-theme';
 import { useUserProfile } from '@/hooks/use-user-profile';
@@ -46,16 +51,19 @@ import {
   chatIdFor,
   editMessage,
   ensureChat,
+  formatDay,
   formatMessageTime,
   formatPresence,
   formatSeparator,
   isOnline,
+  activityOf,
   isTyping,
   markRead,
   needsSeparator,
   previewFor,
   sendLocation,
   sendMessage,
+  setActivity,
   setPinned,
   setTyping,
   toggleReaction,
@@ -64,12 +72,17 @@ import {
   type Message,
   type ReplyRef,
 } from '@/lib/chat';
+import { onChatSearchRequest } from '@/lib/chat-events';
 import { db } from '@/lib/firebase';
 import { canForward } from '@/lib/forward';
+import { useDrafts } from '@/lib/drafts';
+import { effectFor } from '@/lib/effects';
 import { haptics } from '@/lib/haptics';
 import { getCurrentCoords, locationErrorMessage } from '@/lib/location';
 import { mediaErrorMessage, pickImages, sendMediaMessage } from '@/lib/media';
 import { setActiveChat } from '@/lib/push';
+import { suggestReplies } from '@/lib/smart-replies';
+import { playSendSound } from '@/lib/sounds';
 import { callsUnavailableReason } from '@/lib/runtime';
 import { isStarred, starMessage, unstarMessage, useStarred } from '@/lib/starred';
 
@@ -86,14 +99,31 @@ function sendErrorMessage(err: unknown, otherName: string) {
 }
 
 const PAGE_SIZE = 50;
+const VIEWABILITY = { itemVisiblePercentThreshold: 10 };
 
-export default function ChatScreen() {
+export default function ChatRoute() {
+  const { id } = useLocalSearchParams<{ id: string }>();
+  // Bubbles, composer and menus below pick up this chat's own theme, if it has one.
+  return (
+    <ChatAppearanceScope chatId={id}>
+      <ChatScreen />
+    </ChatAppearanceScope>
+  );
+}
+
+function ChatScreen() {
   const { id, otherId, name } = useLocalSearchParams<{ id: string; otherId: string; name: string }>();
   const { user, displayName } = useAuth();
   const theme = useTheme();
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
   const { wallpaper, bubbleColor } = useAppearance();
-  const background = wallpaperGradient(wallpaper, scheme);
+  // Re-tinted every few minutes so the glow follows the time of day.
+  const clock = useNow(5 * 60_000);
+  const background = wallpaperGradient(wallpaper, scheme, {
+    accent: bubbleColor,
+    tint: colorsFor(otherId ?? '')[1],
+    hour: new Date(clock).getHours(),
+  });
   const headerHeight = useHeaderHeight();
   const listRef = useRef<FlatList<Message>>(null);
   // Re-render every few seconds so "typing…" and presence labels stay current.
@@ -113,6 +143,7 @@ export default function ChatScreen() {
   const [error, setError] = useState<string | null>(null);
   const [replyTo, setReplyTo] = useState<ReplyRef | null>(null);
   const [menuFor, setMenuFor] = useState<Message | null>(null);
+  const [menuAnchor, setMenuAnchor] = useState<MenuAnchor | null>(null);
   const [editing, setEditing] = useState<Message | null>(null);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [showJump, setShowJump] = useState(false);
@@ -122,6 +153,30 @@ export default function ChatScreen() {
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [viewerStart, setViewerStart] = useState<number | null>(null);
   const [reactionsFor, setReactionsFor] = useState<Message | null>(null);
+  // Unread count when the chat was opened, taken from the chat list: by the time this
+  // screen's own snapshot arrives, my "mark as read" write has usually zeroed it already.
+  const { chats: listChats } = useChats();
+  const [unreadAtOpen, setUnreadAtOpen] = useState<number | null>(
+    () => listChats?.find((c) => c.id === id)?.unread?.[myUid] ?? null
+  );
+  const [playedEffects, setPlayedEffects] = useState<string[]>([]);
+  const jumpedToUnread = useRef(false);
+  // Floating "Today" / "Yesterday" pill at the top while scrolling through history.
+  const [topDay, setTopDay] = useState<string | null>(null);
+  const [dayShown, setDayShown] = useState(false);
+  const dayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Stable for the list's whole life (FlatList rejects a changing callback).
+  const [onViewableItemsChanged] = useState(
+    () =>
+      ({ viewableItems }: { viewableItems: ListViewToken[] }) => {
+        // Inverted list: the highest index on screen is the oldest one, at the top.
+        let top: ListViewToken | null = null;
+        for (const v of viewableItems) {
+          if (v.index != null && (!top || v.index > (top.index ?? -1))) top = v;
+        }
+        if (top) setTopDay(formatDay((top.item as Message).createdAt));
+      }
+  );
   const me = useUserProfile(myUid);
   const starred = useStarred(myUid);
   // Messages newer than this animate in; the initial history appears without animation.
@@ -177,10 +232,13 @@ export default function ChatScreen() {
   // The chat doc: read markers, typing flags, unread counts, my "deleted at".
   useEffect(() => {
     if (!ready) return;
-    return onSnapshot(doc(db, 'chats', id), (snap) =>
-      setChat(snap.exists() ? ({ id: snap.id, ...snap.data({ serverTimestamps: 'estimate' }) } as Chat) : null)
-    );
-  }, [ready, id]);
+    return onSnapshot(doc(db, 'chats', id), (snap) => {
+      const data = snap.exists() ? ({ id: snap.id, ...snap.data({ serverTimestamps: 'estimate' }) } as Chat) : null;
+      setChat(data);
+      // Remember how many were unread when I opened the chat (for the divider + jump).
+      setUnreadAtOpen((prev) => prev ?? data?.unread?.[myUid] ?? 0);
+    });
+  }, [ready, id, myUid]);
 
   // Mark as read on open, whenever new messages arrive, and when the app returns.
   const myUnread = chat?.unread?.[myUid] ?? 0;
@@ -195,6 +253,22 @@ export default function ChatScreen() {
     });
     return () => sub.remove();
   }, [ready, id, myUid]);
+
+  useEffect(
+    () => () => {
+      if (dayTimer.current) clearTimeout(dayTimer.current);
+    },
+    []
+  );
+
+  // "Search" on the contact sheet opens search here once the sheet has closed.
+  useEffect(
+    () =>
+      onChatSearchRequest((chatId) => {
+        if (chatId === id) setSearching(true);
+      }),
+    [id]
+  );
 
   // Don't show banner notifications for the chat that is on screen.
   useEffect(() => {
@@ -229,6 +303,7 @@ export default function ChatScreen() {
     }
     const reply = replyTo;
     setReplyTo(null);
+    playSendSound();
     try {
       await sendMessage(id, myUid, otherId, text, reply);
       listRef.current?.scrollToOffset({ offset: 0, animated: true });
@@ -265,7 +340,10 @@ export default function ChatScreen() {
   // ── Photos, location and voice messages ──
   async function sendImages(source: 'library' | 'camera') {
     try {
-      const photos = await pickImages(source);
+      setActivity(id, myUid, 'photo').catch(() => {});
+      const photos = await pickImages(source).finally(() => {
+        setActivity(id, myUid, null).catch(() => {});
+      });
       let failed: unknown = null;
       for (let i = 0; i < photos.length; i++) {
         setBusyLabel(photos.length > 1 ? `Sending photo ${i + 1} of ${photos.length}…` : 'Sending photo…');
@@ -273,6 +351,7 @@ export default function ChatScreen() {
           const image = await photos[i]();
           await sendMediaMessage(id, myUid, otherId, { type: 'image', ...image });
           haptics.light();
+          playSendSound();
         } catch (err) {
           // Keep going with the rest; report once at the end.
           failed = err;
@@ -281,8 +360,7 @@ export default function ChatScreen() {
       if (photos.length) listRef.current?.scrollToOffset({ offset: 0, animated: true });
       if (failed) throw failed;
     } catch (err) {
-      haptics.error();
-      showAlert('Photo not sent', mediaErrorMessage(err));
+      toast.error(`Photo not sent. ${mediaErrorMessage(err)}`);
     } finally {
       setBusyLabel(null);
     }
@@ -294,10 +372,10 @@ export default function ChatScreen() {
       setBusyLabel('Sending location…');
       await sendLocation(id, myUid, otherId, coords);
       haptics.light();
+      playSendSound();
       listRef.current?.scrollToOffset({ offset: 0, animated: true });
     } catch (err) {
-      haptics.error();
-      showAlert('Location not sent', locationErrorMessage(err));
+      toast.error(locationErrorMessage(err));
     } finally {
       setBusyLabel(null);
     }
@@ -307,9 +385,9 @@ export default function ChatScreen() {
       setBusyLabel('Sending voice message…');
       await sendMediaMessage(id, myUid, otherId, { type: 'audio', uri, durationMs, waveform });
       haptics.light();
+      playSendSound();
     } catch (err) {
-      haptics.error();
-      showAlert('Voice message not sent', mediaErrorMessage(err));
+      toast.error(`Voice message not sent. ${mediaErrorMessage(err)}`);
     } finally {
       setBusyLabel(null);
     }
@@ -319,7 +397,7 @@ export default function ChatScreen() {
   function jumpTo(messageId: string) {
     const index = visible?.findIndex((m) => m.id === messageId) ?? -1;
     if (index < 0) {
-      showAlert('Message not loaded', 'Scroll up to load older messages, then try again.');
+      toast.info('Scroll up to load older messages, then try again.', 'arrow.up');
       return;
     }
     setSearching(false);
@@ -337,9 +415,10 @@ export default function ChatScreen() {
   }
 
   // ── Long-press menu actions ──
-  function openMenu(message: Message) {
+  function openMenu(message: Message, anchor?: MenuAnchor) {
     if (message.pending) return;
     haptics.medium();
+    setMenuAnchor(anchor ?? null);
     setMenuFor(message);
   }
   function react(emoji: string) {
@@ -371,20 +450,21 @@ export default function ChatScreen() {
       id,
       unpin ? null : { id: target.id, text: previewFor(target).slice(0, 200), senderId: target.senderId }
     ).then(
-      () => haptics.success(),
-      () => haptics.error()
+      () => toast.success(unpin ? 'Unpinned' : 'Pinned to top', unpin ? 'pin.slash' : 'pin.fill'),
+      () => toast.error(unpin ? 'Could not unpin' : 'Could not pin')
     );
   }
   function star() {
     const target = menuFor;
     if (!target) return;
     setMenuFor(null);
-    const op = isStarred(starred, id, target.id)
+    const wasStarred = isStarred(starred, id, target.id);
+    const op = wasStarred
       ? unstarMessage(myUid, id, target.id)
       : starMessage(myUid, id, target, { id: otherId, name: otherName });
     op.then(
-      () => haptics.success(),
-      () => haptics.error()
+      () => toast.success(wasStarred ? 'Removed from Starred' : 'Starred', wasStarred ? 'star.slash' : 'star.fill'),
+      () => toast.error('Could not update Starred')
     );
   }
   function forward() {
@@ -421,8 +501,10 @@ export default function ChatScreen() {
   }
   function copy() {
     if (!menuFor) return;
-    Clipboard.setStringAsync(menuFor.text).catch(() => {});
-    haptics.success();
+    Clipboard.setStringAsync(menuFor.text).then(
+      () => toast.success('Copied', 'doc.on.doc'),
+      () => toast.error('Could not copy')
+    );
     setMenuFor(null);
   }
   function unsend() {
@@ -432,7 +514,7 @@ export default function ChatScreen() {
     const go = () => {
       const isLatest = visible?.[0]?.id === target.id;
       unsendMessage(id, target.id, { isLatest, isPinned: chat?.pinned?.id === target.id }).catch(() =>
-        haptics.error()
+        toast.error('Could not unsend the message')
       );
     };
     if (Platform.OS === 'web') {
@@ -455,6 +537,8 @@ export default function ChatScreen() {
   const hasMessages = !!visible && visible.length > 0;
   const otherTyping = isTyping(chat, otherId);
   const otherOnline = isOnline(profile?.lastSeen);
+  // Their color (from their avatar palette) tints this chat: header ring and glow.
+  const contactTint = colorsFor(otherId ?? '')[1];
   const otherReadAt = chat?.lastRead?.[otherId]?.toMillis() ?? 0;
   // Messenger-style "seen" avatar sits under my newest message they have read.
   const lastReadMineId =
@@ -469,24 +553,61 @@ export default function ChatScreen() {
     ? (visible ?? []).filter((m) => !m.deleted && previewFor(m).toLowerCase().includes(term))
     : [];
   const pinned = chat?.pinned ?? null;
+  // "Unread messages" divider: above the oldest message that was unread on opening.
+  const firstUnreadId =
+    unreadAtOpen && visible
+      ? (visible.filter((m) => m.senderId !== myUid)[unreadAtOpen - 1]?.id ?? null)
+      : null;
+  const firstUnreadIndex = firstUnreadId ? (visible?.findIndex((m) => m.id === firstUnreadId) ?? -1) : -1;
+  // Opening a chat with many unread messages starts at the first unread one.
+  useEffect(() => {
+    if (jumpedToUnread.current || firstUnreadIndex < 0) return;
+    jumpedToUnread.current = true;
+    if (firstUnreadIndex < 6) return; // already on screen
+    const timer = setTimeout(
+      () => listRef.current?.scrollToIndex({ index: firstUnreadIndex, animated: true, viewPosition: 0.5 }),
+      350
+    );
+    return () => clearTimeout(timer);
+  }, [firstUnreadIndex]);
+
+  // Quick replies to the newest message, when it's theirs and I'm not mid-typing.
+  const drafts = useDrafts();
+  const newest = visible?.[0];
+  const smartFor =
+    newest && newest.senderId !== myUid && !newest.pending && !editing && !replyTo && !drafts[id]?.trim()
+      ? newest
+      : null;
+  const smartReplies = smartFor ? suggestReplies(smartFor) : [];
+  // Full-screen effect for a new "Happy birthday" / "Congrats" / "Love you" message
+  // (sent or received while the chat is open), played once per message.
+  const effectKind =
+    newest && !newest.deleted && (newest.type ?? 'text') === 'text' && !playedEffects.includes(newest.id)
+      && (newest.createdAt?.toMillis() ?? Infinity) > openedAt
+      ? effectFor(newest.text)
+      : null;
 
   return (
     <KeyboardAvoidingView
       style={[
         styles.flex,
-        { backgroundColor: theme.background },
+        // The header floats (glass) over the top of the wallpaper; content starts below it.
+        { backgroundColor: theme.background, paddingTop: headerHeight },
         background ? { backgroundImage: background } : null,
       ]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={headerHeight}>
+      keyboardVerticalOffset={0}>
       <Stack.Screen
         options={{
-          // iOS 26+ makes the header transparent (Liquid Glass) by default. The inverted
-          // message list can't use the system scroll-edge effect, so messages showed
-          // through the header. An opaque header also means the screen starts below it,
-          // which is what keyboardVerticalOffset={headerHeight} assumes.
-          headerTransparent: false,
-          headerStyle: { backgroundColor: theme.background },
+          // Glass header over the wallpaper. The screen pads its content by the header
+          // height, so messages never scroll underneath it (the inverted list can't use
+          // the system scroll-edge effect) while the wallpaper runs up behind the glass.
+          headerTransparent: true,
+          headerBlurEffect: theme.scheme === 'dark' ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight',
+          headerStyle: {
+            backgroundColor:
+              Platform.OS === 'ios' ? 'transparent' : theme.scheme === 'dark' ? 'rgba(18,18,22,0.6)' : 'rgba(255,255,255,0.6)',
+          },
           headerShadowVisible: false,
           headerTitle: () => (
             <Pressable
@@ -500,6 +621,8 @@ export default function ChatScreen() {
               name={otherName}
               status={formatPresence(profile?.lastSeen)}
               typing={otherTyping}
+              activity={activityOf(chat, otherId)}
+              ringColor={contactTint}
               online={otherOnline}
               avatarUrl={profile?.avatarUrl}
             />
@@ -562,7 +685,12 @@ export default function ChatScreen() {
             </Text>
           </View>
           <Pressable
-            onPress={() => setPinned(id, null).catch(() => haptics.error())}
+            onPress={() =>
+              setPinned(id, null).then(
+                () => toast.success('Unpinned', 'pin.slash'),
+                () => toast.error('Could not unpin')
+              )
+            }
             hitSlop={10}
             accessibilityRole="button"
             accessibilityLabel="Unpin">
@@ -640,7 +768,18 @@ export default function ChatScreen() {
             contentContainerStyle={styles.list}
             keyboardDismissMode="interactive"
             keyboardShouldPersistTaps="handled"
-            onScroll={(e) => setShowJump(e.nativeEvent.contentOffset.y > 400)}
+            onScroll={(e) => {
+              const y = e.nativeEvent.contentOffset.y;
+              setShowJump(y > 400);
+              // Show the day pill while scrolling through history, hide it shortly after.
+              if (y > 40) {
+                setDayShown(true);
+                if (dayTimer.current) clearTimeout(dayTimer.current);
+                dayTimer.current = setTimeout(() => setDayShown(false), 1400);
+              }
+            }}
+            onViewableItemsChanged={onViewableItemsChanged}
+            viewabilityConfig={VIEWABILITY}
             scrollEventThrottle={100}
             onEndReachedThreshold={0.3}
             onEndReached={() => canLoadMore && setPageSize((n) => n + PAGE_SIZE)}
@@ -678,6 +817,18 @@ export default function ChatScreen() {
                       {formatSeparator(item.createdAt)}
                     </Text>
                   ) : null}
+                  {item.id === firstUnreadId ? (
+                    <View style={styles.unreadDivider} accessibilityRole="header">
+                      <View style={[styles.unreadLine, { backgroundColor: `${bubbleColor}66` }]} />
+                      <View style={[styles.unreadPill, { backgroundColor: `${bubbleColor}22`, borderColor: `${bubbleColor}55` }]}>
+                        <Icon name="arrow.down" size={11} color={bubbleColor} fallback="↓" />
+                        <Text style={[styles.unreadText, { color: bubbleColor }]}>
+                          {unreadAtOpen} unread {unreadAtOpen === 1 ? 'message' : 'messages'}
+                        </Text>
+                      </View>
+                      <View style={[styles.unreadLine, { backgroundColor: `${bubbleColor}66` }]} />
+                    </View>
+                  ) : null}
                   <MessageBubble
                     chatId={id}
                     message={item}
@@ -688,6 +839,8 @@ export default function ChatScreen() {
                     myUid={myUid}
                     otherName={otherName}
                     starred={isStarred(starred, id, item.id)}
+                    read={mine && !item.pending && sentAt <= otherReadAt}
+                    avatar={{ id: otherId, name: otherName, uri: profile?.avatarUrl }}
                     highlighted={highlightId === item.id}
                     onLongPress={openMenu}
                     onReply={startReply}
@@ -706,17 +859,23 @@ export default function ChatScreen() {
                       )}`}>
                       <Avatar id={otherId} name={otherName} size={16} uri={profile?.avatarUrl} />
                     </Animated.View>
-                  ) : index === 0 && mine ? (
-                    <Animated.Text
-                      entering={FadeIn}
-                      style={[styles.status, { color: theme.textSecondary }]}>
-                      {item.pending ? 'Sending…' : 'Delivered'}
-                    </Animated.Text>
                   ) : null}
                 </View>
               );
             }}
           />
+
+          {dayShown && topDay ? (
+            <Animated.View
+              entering={FadeIn.duration(150)}
+              exiting={FadeOut.duration(250)}
+              pointerEvents="none"
+              style={styles.dayWrap}>
+              <View style={[styles.dayPill, { backgroundColor: theme.card }]}>
+                <Text style={[styles.dayText, { color: theme.text }]}>{topDay}</Text>
+              </View>
+            </Animated.View>
+          ) : null}
 
           {showJump ? (
             <Animated.View
@@ -742,13 +901,27 @@ export default function ChatScreen() {
             You blocked {otherName}. They can&apos;t message you.
           </Text>
           <Pressable
-            onPress={() => unblock(otherId).then(() => haptics.success(), () => haptics.error())}
+            onPress={() =>
+              unblock(otherId).then(
+                () => toast.success(`${otherName} unblocked`),
+                () => toast.error('Could not unblock')
+              )
+            }
             accessibilityRole="button"
             hitSlop={8}>
             <Text style={styles.unblock}>Unblock</Text>
           </Pressable>
         </View>
       ) : (
+        <>
+        <SmartReplies
+          // Re-keyed per message so the chips animate in for each new one.
+          key={smartFor?.id ?? 'none'}
+          replies={smartReplies}
+          onPick={(text) => {
+            handleSend(text);
+          }}
+        />
         <Composer
           // Remount to load the message being edited into the field.
           key={editing?.id ?? 'compose'}
@@ -764,11 +937,16 @@ export default function ChatScreen() {
           onAttach={() => setAttachOpen(true)}
           onVoice={sendVoice}
           busyLabel={busyLabel}
+          draftKey={id}
+          onActivity={(kind) => setActivity(id, myUid, kind).catch(() => {})}
         />
+        </>
       )}
 
       <MessageMenu
+        chatId={id}
         message={menuFor}
+        anchor={menuAnchor}
         mine={menuFor?.senderId === myUid}
         myReaction={menuFor?.reactions?.[myUid]}
         onClose={() => setMenuFor(null)}
@@ -811,6 +989,15 @@ export default function ChatScreen() {
         }}
       />
 
+      {effectKind && newest ? (
+        <ScreenEffect
+          key={newest.id}
+          kind={effectKind}
+          seed={newest.id.charCodeAt(0) + newest.id.length}
+          onDone={() => setPlayedEffects((ids) => [...ids, newest.id])}
+        />
+      ) : null}
+
       <ActionSheet
         visible={attachOpen}
         onClose={() => setAttachOpen(false)}
@@ -839,9 +1026,28 @@ const styles = StyleSheet.create({
     marginTop: Spacing.three,
     marginBottom: Spacing.one,
   },
-  status: { alignSelf: 'flex-end', fontSize: 11, fontWeight: '500', marginTop: 3, marginRight: 4 },
   seen: { alignSelf: 'flex-end', marginTop: 3, marginRight: 2 },
   loadingMore: { marginVertical: Spacing.three },
+  unreadDivider: { flexDirection: 'row', alignItems: 'center', gap: 8, marginVertical: 12, paddingHorizontal: 4 },
+  unreadLine: { flex: 1, height: StyleSheet.hairlineWidth * 2 },
+  unreadPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  unreadText: { fontSize: 12, fontWeight: '700' },
+  dayWrap: { position: 'absolute', top: 8, left: 0, right: 0, alignItems: 'center' },
+  dayPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 14,
+    boxShadow: '0 2px 10px rgba(0,0,0,0.15)',
+  },
+  dayText: { fontSize: 12, fontWeight: '600' },
   jumpWrap: { position: 'absolute', right: 14, bottom: 12 },
   jump: {
     width: 38,

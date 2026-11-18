@@ -14,7 +14,8 @@ const palette: [string, string][] = [
   ['#FF8CC6', '#D6409F'],
 ];
 
-function colorsFor(seed: string) {
+/** The two-tone colors of someone's initials avatar (also used to tint their chat). */
+export function colorsFor(seed: string) {
   let hash = 0;
   for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) | 0;
   return palette[Math.abs(hash) % palette.length];

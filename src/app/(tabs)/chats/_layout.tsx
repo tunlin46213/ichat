@@ -7,6 +7,9 @@ export default function ChatsLayout() {
       screenOptions={{
         headerLargeTitleEnabled: true,
         headerShadowVisible: false,
+        // Let the aurora glow show behind the large title; blur once content scrolls under it.
+        headerTransparent: Platform.OS === 'ios',
+        headerBlurEffect: 'systemChromeMaterial',
         // Web draws its own iOS-style large title (LargeTitleHeader) inside the screen.
         headerShown: Platform.OS !== 'web',
       }}>

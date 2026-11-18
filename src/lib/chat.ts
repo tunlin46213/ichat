@@ -1,5 +1,6 @@
 import {
   collection,
+  deleteField,
   doc,
   increment,
   serverTimestamp,
@@ -37,7 +38,17 @@ export type Chat = {
   typing?: Record<string, Timestamp | null>;
   /** Message pinned to the top of the chat (shared by both members). */
   pinned?: PinnedRef | null;
+  /** Per-user: when they pinned this chat to the top of their list. */
+  pinnedAt?: Record<string, Timestamp | null>;
+  /** Per-user: when they archived it (out of the main list). */
+  archivedAt?: Record<string, Timestamp | null>;
+  /** Per-user live activity ("recording voice…", "choosing a photo…"). */
+  activity?: Record<string, { kind: ActivityKind; at: Timestamp | null } | null>;
 };
+
+export type ActivityKind = 'recording' | 'photo';
+
+export const MAX_PINNED_CHATS = 5;
 
 export type PinnedRef = { id: string; text: string; senderId: string };
 
@@ -50,6 +61,8 @@ export type Message = {
   /** missing on older messages, which are all text */
   type?: MessageType;
   text: string;
+  /** tiny base64 JPEG of a photo, shown blurred until the full one loads */
+  thumb?: string;
   /** photo / voice note stored in chats/{chatId}/media/{mediaId} (see lib/media.ts) */
   mediaId?: string;
   mime?: string;
@@ -251,6 +264,33 @@ export function markRead(chatId: string, myUid: string) {
   });
 }
 
+/** Pins / unpins a chat at the top of my list (only affects me). */
+export function setChatPinned(chatId: string, myUid: string, pinned: boolean) {
+  return updateDoc(chatRef(chatId), { [`pinnedAt.${myUid}`]: pinned ? serverTimestamp() : deleteField() });
+}
+
+/** Moves a chat to / out of my archive (only affects me). */
+export function setChatArchived(chatId: string, myUid: string, archived: boolean) {
+  return updateDoc(chatRef(chatId), {
+    [`archivedAt.${myUid}`]: archived ? serverTimestamp() : deleteField(),
+    // Archiving also unpins it, like iOS Messages / Telegram.
+    ...(archived ? { [`pinnedAt.${myUid}`]: deleteField() } : {}),
+  });
+}
+
+/** "Mark as Unread": shows the unread dot again until I open the chat. */
+export function markUnread(chatId: string, myUid: string) {
+  return updateDoc(chatRef(chatId), { [`unread.${myUid}`]: 1 });
+}
+
+export function isPinnedFor(chat: Chat, uid: string) {
+  return !!chat.pinnedAt?.[uid];
+}
+
+export function isArchivedFor(chat: Chat, uid: string) {
+  return !!chat.archivedAt?.[uid];
+}
+
 /** Pass true while typing (call at most every few seconds), false when done. */
 export function setTyping(chatId: string, myUid: string, typing: boolean) {
   return updateDoc(chatRef(chatId), {
@@ -261,6 +301,22 @@ export function setTyping(chatId: string, myUid: string, typing: boolean) {
 export function isTyping(chat: Pick<Chat, 'typing'> | null | undefined, uid: string) {
   const at = chat?.typing?.[uid];
   return !!at && Date.now() - at.toMillis() < TYPING_FRESH_MS;
+}
+
+const ACTIVITY_FRESH_MS = 20_000;
+
+/** Shows the other person what I'm doing ("recording voice…"); null clears it. */
+export function setActivity(chatId: string, myUid: string, kind: ActivityKind | null) {
+  return updateDoc(chatRef(chatId), {
+    [`activity.${myUid}`]: kind ? { kind, at: serverTimestamp() } : null,
+  });
+}
+
+/** Their current activity, if it's recent. */
+export function activityOf(chat: Pick<Chat, 'activity'> | null | undefined, uid: string): ActivityKind | null {
+  const a = chat?.activity?.[uid];
+  if (!a?.at) return null;
+  return Date.now() - a.at.toMillis() < ACTIVITY_FRESH_MS ? a.kind : null;
 }
 
 /** Sets my reaction, or removes it when I pick the same emoji again. */
@@ -382,6 +438,25 @@ export function formatSeparator(ts: Timestamp | null) {
     return `${date.toLocaleDateString([], { weekday: 'long' })} ${time(date)}`;
   }
   return `${date.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })} ${time(date)}`;
+}
+
+/** Floating day label while scrolling a chat: "Today", "Yesterday", "Monday", "Mon, 12 Mar". */
+export function formatDay(ts: Timestamp | null) {
+  const date = ts?.toDate() ?? new Date();
+  const now = new Date();
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (date.toDateString() === now.toDateString()) return 'Today';
+  if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  if (now.getTime() - date.getTime() < 6 * 86400000) {
+    return date.toLocaleDateString([], { weekday: 'long' });
+  }
+  return date.toLocaleDateString([], {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    ...(date.getFullYear() !== now.getFullYear() && { year: 'numeric' }),
+  });
 }
 
 /** A time separator goes above a message on a new day or after a 15-minute gap. */

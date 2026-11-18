@@ -3,7 +3,6 @@ import { collection, doc, getDoc, onSnapshot, orderBy, query } from 'firebase/fi
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Platform,
   Pressable,
@@ -12,6 +11,7 @@ import {
   View,
 } from 'react-native';
 
+import { toast } from '@/components/toast';
 import { Avatar } from '@/components/avatar';
 import { HeaderAction } from '@/components/header-action';
 import { ListMessage } from '@/components/list-states';
@@ -24,7 +24,6 @@ import { useTheme } from '@/hooks/use-theme';
 import { chatIdFor, type Message, type UserProfile } from '@/lib/chat';
 import { db } from '@/lib/firebase';
 import { forwardMessage } from '@/lib/forward';
-import { haptics } from '@/lib/haptics';
 
 /**
  * New-chat picker. With `forwardChatId` + `forwardMessageId` it becomes "Forward to…":
@@ -74,17 +73,14 @@ export default function UsersScreen() {
         { uid: myUid, name: displayName ?? 'User' },
         { uid: person.id, name: person.name }
       );
-      haptics.success();
+      toast.success(`Forwarded to ${person.name}`, 'arrowshape.turn.up.right.fill');
       router.replace({
         pathname: '/chat/[id]',
         params: { id: chatId, otherId: person.id, name: person.name },
       });
     } catch {
-      haptics.error();
       setSendingTo(null);
-      const text = `Could not forward to ${person.name}. Try again.`;
-      if (Platform.OS === 'web') window.alert(text);
-      else Alert.alert('Not forwarded', text);
+      toast.error(`Could not forward to ${person.name}. Try again.`);
     }
   }
 

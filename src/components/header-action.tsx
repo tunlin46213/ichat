@@ -3,7 +3,7 @@ import type { ComponentProps } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Icon, type IconName } from '@/components/icon';
-import { Accent } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 
 type ToolbarIcon = ComponentProps<typeof Stack.Toolbar.Button>['icon'];
 
@@ -25,6 +25,7 @@ export function HeaderActions({ placement, buttons }: {
   placement: 'left' | 'right';
   buttons: HeaderButton[];
 }) {
+  const theme = useTheme();
   if (Platform.OS === 'web') {
     const render = () => (
       <View style={styles.webRow}>
@@ -37,9 +38,9 @@ export function HeaderActions({ placement, buttons }: {
             accessibilityLabel={b.label}
             style={({ pressed }) => [styles.webButton, { opacity: pressed ? 0.5 : 1 }]}>
             {b.icon ? (
-              <Icon name={b.icon as IconName} size={22} color={Accent} fallback={b.label} />
+              <Icon name={b.icon as IconName} size={22} color={theme.accent} fallback={b.label} />
             ) : (
-              <Text style={[styles.webText, b.bold && styles.bold]}>{b.label}</Text>
+              <Text style={[styles.webText, { color: theme.accent }, b.bold && styles.bold]}>{b.label}</Text>
             )}
           </Pressable>
         ))}
@@ -71,6 +72,6 @@ export function HeaderAction({ placement, ...button }: HeaderButton & { placemen
 const styles = StyleSheet.create({
   webRow: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 8, gap: 14 },
   webButton: { paddingHorizontal: 4 },
-  webText: { color: Accent, fontSize: 17 },
+  webText: { fontSize: 17 },
   bold: { fontWeight: '600' },
 });

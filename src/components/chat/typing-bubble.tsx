@@ -56,14 +56,14 @@ export function TypingBubble() {
 }
 
 const styles = StyleSheet.create({
-  row: { flexDirection: 'row', marginTop: 8, marginBottom: 2 },
+  // Indented past the avatar column of incoming messages.
+  row: { flexDirection: 'row', marginTop: 8, marginBottom: 2, marginLeft: 34 },
   bubble: {
     flexDirection: 'row',
     gap: 5,
     paddingHorizontal: 14,
     paddingVertical: 13,
     borderRadius: 18,
-    borderBottomLeftRadius: 5,
   },
   dot: { width: 8, height: 8, borderRadius: 4 },
 });

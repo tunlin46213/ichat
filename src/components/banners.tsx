@@ -4,7 +4,7 @@ import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInUp, FadeOutUp } from 'react-native-reanimated';
 
 import { Icon } from '@/components/icon';
-import { Accent, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
 import { authErrorMessage, useAuth } from '@/context/auth';
 import { useTheme } from '@/hooks/use-theme';
 import { haptics } from '@/lib/haptics';
@@ -37,7 +37,7 @@ export function InstallBanner() {
   return (
     <View style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
       <View style={styles.cardRow}>
-        <Icon name="bell.fill" size={16} color={Accent} fallback="🔔" />
+        <Icon name="bell.fill" size={16} color={theme.accent} fallback="🔔" />
         <Text style={[styles.cardTitle, { color: theme.text }]}>Install iChat</Text>
       </View>
       <Text style={[styles.cardText, { color: theme.textSecondary }]}>
@@ -46,7 +46,7 @@ export function InstallBanner() {
       </Text>
       <View style={styles.cardActions}>
         <Pressable onPress={dismiss} hitSlop={8}>
-          <Text style={styles.action}>Not now</Text>
+          <Text style={[styles.action, { color: theme.accent }]}>Not now</Text>
         </Pressable>
       </View>
     </View>
@@ -97,7 +97,7 @@ export function VerifyEmailBanner() {
   return (
     <View style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
       <View style={styles.cardRow}>
-        <Icon name="exclamationmark.circle.fill" size={18} color={Accent} fallback="!" />
+        <Icon name="exclamationmark.circle.fill" size={18} color={theme.accent} fallback="!" />
         <Text style={[styles.cardTitle, { color: theme.text }]}>Verify your email</Text>
       </View>
       <Text style={[styles.cardText, { color: theme.textSecondary }]}>
@@ -107,10 +107,10 @@ export function VerifyEmailBanner() {
       {note ? <Text style={[styles.cardText, { color: theme.textSecondary }]}>{note}</Text> : null}
       <View style={styles.cardActions}>
         <Pressable onPress={resend} hitSlop={8}>
-          <Text style={styles.action}>Resend email</Text>
+          <Text style={[styles.action, { color: theme.accent }]}>Resend email</Text>
         </Pressable>
         <Pressable onPress={check} hitSlop={8}>
-          <Text style={styles.action}>I&apos;ve verified</Text>
+          <Text style={[styles.action, { color: theme.accent }]}>I&apos;ve verified</Text>
         </Pressable>
       </View>
     </View>
@@ -139,5 +139,5 @@ const styles = StyleSheet.create({
   cardTitle: { fontSize: 16, fontWeight: '600' },
   cardText: { fontSize: 14, lineHeight: 19 },
   cardActions: { flexDirection: 'row', gap: Spacing.four, marginTop: 4 },
-  action: { color: Accent, fontSize: 15, fontWeight: '600' },
+  action: { fontSize: 15, fontWeight: '600' },
 });

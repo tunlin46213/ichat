@@ -1,7 +1,6 @@
 // Loaded only in development/production builds (see calls-provider.native.tsx).
 import {
   CallingState,
-  RingingCallContent,
   StreamCall,
   StreamVideo,
   StreamVideoClient,
@@ -10,13 +9,13 @@ import {
 } from '@stream-io/video-react-native-sdk';
 import { useEffect, useState, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/context/auth';
 import { chatIdFor, sendCallMessage } from '@/lib/chat';
 import { fetchStreamToken } from '@/lib/notify';
 import { streamApiKey } from '@/lib/runtime';
 
+import { CallPill, CallScreen } from './call-screen';
 import { CallsContext } from './context';
 
 // Issued by the Cloudflare worker (worker/src/index.ts → /stream-token).
@@ -97,7 +96,8 @@ export function StreamCallsProvider({ children }: { children: ReactNode }) {
     await call.getOrCreate({
       ring: true,
       video,
-      data: { members: [{ user_id: uid }, { user_id: other.id }] },
+      // custom.video tells the other phone which screen to show before it answers.
+      data: { members: [{ user_id: uid }, { user_id: other.id }], custom: { video } },
     });
     logCallWhenOver(call, uid, other.id, video);
   }
@@ -111,7 +111,7 @@ export function StreamCallsProvider({ children }: { children: ReactNode }) {
       {children}
       {client ? (
         <StreamVideo client={client}>
-          <RingingCalls />
+          <RingingCalls myUid={uid!} />
         </StreamVideo>
       ) : null}
     </CallsContext>
@@ -119,22 +119,30 @@ export function StreamCallsProvider({ children }: { children: ReactNode }) {
 }
 
 /** Full-screen incoming / outgoing / in-call UI for the current ringing call. */
-function RingingCalls() {
+function RingingCalls({ myUid }: { myUid: string }) {
   const ringing = useStreamCalls().filter((c) => c.ringing);
   const call = ringing[0];
   if (!call) return null;
+  // Keyed by call so a new call always starts full screen.
+  return <CallOverlay key={call.cid} call={call} myUid={myUid} />;
+}
+
+/** Full-screen call, or — minimized — a small floating pill so the app stays usable. */
+function CallOverlay({ call, myUid }: { call: Call; myUid: string }) {
+  const [minimized, setMinimized] = useState(false);
   return (
-    <View style={[StyleSheet.absoluteFill, styles.overlay]}>
-      <StreamCall call={call}>
-        <SafeAreaView style={styles.flex}>
-          <RingingCallContent />
-        </SafeAreaView>
-      </StreamCall>
-    </View>
+    <StreamCall call={call}>
+      {minimized ? (
+        <CallPill myUid={myUid} onExpand={() => setMinimized(false)} />
+      ) : (
+        <View style={[StyleSheet.absoluteFill, styles.overlay]}>
+          <CallScreen myUid={myUid} onMinimize={() => setMinimized(true)} />
+        </View>
+      )}
+    </StreamCall>
   );
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1 },
   overlay: { backgroundColor: '#000', zIndex: 1000 },
 });

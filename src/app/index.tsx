@@ -8,6 +8,6 @@ const CHATS = '/chats' as Href;
 
 /** Entry URL "/": send the user to the right place. */
 export default function Index() {
-  const { user } = useAuth();
-  return <Redirect href={user ? CHATS : '/login'} />;
+  const { user, needsOnboarding } = useAuth();
+  return <Redirect href={!user ? '/login' : needsOnboarding ? ('/onboarding' as Href) : CHATS} />;
 }

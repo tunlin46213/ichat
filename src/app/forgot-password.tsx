@@ -62,6 +62,8 @@ export default function ForgotPasswordScreen() {
           value={email}
           onChangeText={setEmail}
           placeholder="Email"
+          icon="envelope.fill"
+          iconFallback="✉"
           autoCapitalize="none"
           autoComplete="email"
           keyboardType="email-address"

@@ -49,6 +49,10 @@ export function ChatsProvider({ children }: { children: ReactNode }) {
     return onSnapshot(
       q,
       (snap) => {
+        // Offline at start-up, Firestore first answers from its (empty) local cache.
+        // That isn't "no chats": keep showing the loading state, and don't treat the
+        // real list, when it arrives, as a burst of new messages.
+        if (snap.metadata.fromCache && snap.empty) return;
         for (const change of snap.docChanges()) {
           if (change.type === 'removed') continue;
           const chat = { id: change.doc.id, ...change.doc.data({ serverTimestamps: 'estimate' }) } as Chat;

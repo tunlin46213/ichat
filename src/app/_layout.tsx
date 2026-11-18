@@ -1,28 +1,44 @@
 import * as Notifications from 'expo-notifications';
 import { DarkTheme, DefaultTheme, router, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
-import { Platform, useColorScheme } from 'react-native';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { CallsProvider } from '@/calls/calls-provider';
+import { ConnectingScreen } from '@/components/connecting-screen';
 import { InAppBanner } from '@/components/in-app-banner';
+import { ToastHost } from '@/components/toast';
 import { PhoneFrame } from '@/components/phone-frame';
-import { Accent, Colors } from '@/constants/theme';
-import { AppearanceProvider } from '@/context/appearance';
+import { Colors } from '@/constants/theme';
+import { AppearanceProvider, useAccent } from '@/context/appearance';
 import { AuthProvider, useAuth } from '@/context/auth';
 import { BlocksProvider } from '@/context/blocks';
 import { ChatsProvider } from '@/context/chats';
+import { StoriesProvider } from '@/context/stories';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { ChatNotificationData } from '@/lib/push';
 
 SplashScreen.preventAutoHideAsync();
 
 function RootNavigator() {
   const colorScheme = useColorScheme();
-  const { user, initializing } = useAuth();
+  const accent = useAccent();
+  const { user, initializing, needsOnboarding } = useAuth();
 
+  // Restoring a saved login asks Google's servers first; on a slow or filtered mobile
+  // connection that can hang for up to a minute. Don't sit on the splash that long.
+  const [splashTimedOut, setSplashTimedOut] = useState(false);
   useEffect(() => {
-    if (!initializing) SplashScreen.hideAsync();
+    if (!initializing) {
+      SplashScreen.hideAsync();
+      return;
+    }
+    const timer = setTimeout(() => {
+      setSplashTimedOut(true);
+      SplashScreen.hideAsync();
+    }, 3000);
+    return () => clearTimeout(timer);
   }, [initializing]);
 
   // Tapping a message notification opens that chat (also when it launched the app).
@@ -44,7 +60,7 @@ function RootNavigator() {
 
   // Keep the splash screen up until we know whether a saved session exists,
   // so a logged-in user never sees the login screen flash.
-  if (initializing) return null;
+  if (initializing) return splashTimedOut ? <ConnectingScreen /> : null;
 
   return (
     <Stack
@@ -53,7 +69,7 @@ function RootNavigator() {
         // On web the JS header defaults to an Android look; match iOS instead.
         ...(Platform.OS === 'web' && {
           headerTitleAlign: 'center',
-          headerTintColor: Accent,
+          headerTintColor: accent,
           // Tint colors the back button; the title stays the normal text color, as on iOS.
           headerTitleStyle: {
             fontSize: 17,
@@ -63,7 +79,11 @@ function RootNavigator() {
         }),
       }}>
       <Stack.Screen name="index" />
-      <Stack.Protected guard={!!user}>
+      {/* Welcome steps right after sign-up (photo, name, tips). */}
+      <Stack.Protected guard={!!user && needsOnboarding}>
+        <Stack.Screen name="onboarding" options={{ gestureEnabled: false }} />
+      </Stack.Protected>
+      <Stack.Protected guard={!!user && !needsOnboarding}>
         {/* Tabs (Chats, Settings). Each tab has its own stack with a large-title header. */}
         <Stack.Screen name="(tabs)" />
         {/* Pushed over the tabs, so the tab bar is hidden while chatting. */}
@@ -75,6 +95,15 @@ function RootNavigator() {
         <Stack.Screen
           name="users"
           options={{ headerShown: true, presentation: 'modal', title: 'New Chat' }}
+        />
+        {/* Stories: compose and play, full screen. */}
+        <Stack.Screen
+          name="story/new"
+          options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }}
+        />
+        <Stack.Screen
+          name="story/[uid]"
+          options={{ presentation: 'fullScreenModal', animation: 'fade' }}
         />
         {/* Contact sheet: block / report. */}
         <Stack.Screen
@@ -103,27 +132,37 @@ function SignedInOverlays() {
   return <InAppBanner />;
 }
 
-export default function RootLayout() {
+/** Navigation colors follow Settings → Appearance (mode and accent color). */
+function NavigationTheme({ children }: { children: ReactNode }) {
   const colorScheme = useColorScheme();
+  const accent = useAccent();
+  const base = colorScheme === 'dark' ? DarkTheme : DefaultTheme;
+  return <ThemeProvider value={{ ...base, colors: { ...base.colors, primary: accent } }}>{children}</ThemeProvider>;
+}
+
+export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-        <AuthProvider>
-          <AppearanceProvider>
+      <AuthProvider>
+        <AppearanceProvider>
+          <NavigationTheme>
             <BlocksProvider>
               {/* Chats live here (not in the tabs) so the in-app banner works on every screen. */}
               <ChatsProvider>
-                <CallsProvider>
-                  <PhoneFrame>
-                    <RootNavigator />
-                    <SignedInOverlays />
-                  </PhoneFrame>
-                </CallsProvider>
+                <StoriesProvider>
+                  <CallsProvider>
+                    <PhoneFrame>
+                      <RootNavigator />
+                      <SignedInOverlays />
+                      <ToastHost />
+                    </PhoneFrame>
+                  </CallsProvider>
+                </StoriesProvider>
               </ChatsProvider>
             </BlocksProvider>
-          </AppearanceProvider>
-        </AuthProvider>
-      </ThemeProvider>
+          </NavigationTheme>
+        </AppearanceProvider>
+      </AuthProvider>
     </GestureHandlerRootView>
   );
 }

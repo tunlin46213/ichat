@@ -38,6 +38,9 @@ type AuthContextValue = {
   /** Re-checks emailVerified with the server (after the user clicked the link). */
   refreshUser: () => Promise<void>;
   sendPasswordReset: (email: string) => Promise<void>;
+  /** true right after sign-up, until the welcome steps are finished or skipped */
+  needsOnboarding: boolean;
+  finishOnboarding: () => void;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -57,6 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
   const [initializing, setInitializing] = useState(true);
   const [emailVerified, setEmailVerified] = useState(auth.currentUser?.emailVerified ?? false);
+  const [needsOnboarding, setNeedsOnboarding] = useState(false);
 
   useEffect(() => {
     return onAuthStateChanged(auth, (u) => {
@@ -110,7 +114,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function register(name: string, email: string, password: string) {
     const cleanName = name.trim();
-    const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
+    // Set before the account exists: onAuthStateChanged fires mid-way through sign-up,
+    // and the navigator must go straight to the welcome steps, not flash the chat list.
+    setNeedsOnboarding(true);
+    let cred;
+    try {
+      cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
+    } catch (err) {
+      setNeedsOnboarding(false);
+      throw err;
+    }
     // onAuthStateChanged has already fired with no name; set it now.
     setDisplayName(cleanName);
     await updateProfile(cred.user, { displayName: cleanName });
@@ -131,6 +144,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function logout() {
+    setNeedsOnboarding(false);
     if (auth.currentUser) await unregisterPush(auth.currentUser.uid);
     await signOut(auth);
   }
@@ -186,6 +200,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         resendVerification,
         refreshUser,
         sendPasswordReset,
+        needsOnboarding: needsOnboarding && !!user,
+        finishOnboarding: () => setNeedsOnboarding(false),
       }}>
       {children}
     </AuthContext>

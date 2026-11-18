@@ -49,6 +49,8 @@ export default function RegisterScreen() {
           value={name}
           onChangeText={setName}
           placeholder="Name"
+          icon="person.fill"
+          iconFallback="👤"
           autoComplete="name"
           textContentType="name"
           maxLength={40}
@@ -61,6 +63,8 @@ export default function RegisterScreen() {
           value={email}
           onChangeText={setEmail}
           placeholder="Email"
+          icon="envelope.fill"
+          iconFallback="✉"
           autoCapitalize="none"
           autoComplete="email"
           keyboardType="email-address"
@@ -76,6 +80,8 @@ export default function RegisterScreen() {
           value={password}
           onChangeText={setPassword}
           placeholder="Password (6+ characters)"
+          icon="lock.fill"
+          iconFallback="🔒"
           secureTextEntry
           autoComplete="new-password"
           textContentType="newPassword"
@@ -88,6 +94,8 @@ export default function RegisterScreen() {
           value={confirm}
           onChangeText={setConfirm}
           placeholder="Confirm password"
+          icon="lock.fill"
+          iconFallback="🔒"
           secureTextEntry
           autoComplete="new-password"
           textContentType="newPassword"
@@ -95,6 +103,7 @@ export default function RegisterScreen() {
           onSubmitEditing={onSubmit}
         />
       </FieldGroup>
+      {password ? <StrengthMeter password={password} /> : null}
       <Pressable
         onPress={() => setAgreed((v) => !v)}
         accessibilityRole="checkbox"
@@ -123,7 +132,48 @@ export default function RegisterScreen() {
   );
 }
 
+/** 0–4: length, mixed case, digits, symbols. */
+function strengthOf(password: string) {
+  if (password.length < 6) return 0;
+  let score = 1;
+  if (password.length >= 10) score++;
+  if (/[a-z]/.test(password) && /[A-Z]/.test(password)) score++;
+  if (/\d/.test(password) && /[^A-Za-z0-9]/.test(password)) score++;
+  return score;
+}
+
+const LEVELS = [
+  { label: 'Too short', color: '#E5484D' },
+  { label: 'Weak', color: '#F76B15' },
+  { label: 'Okay', color: '#FFB224' },
+  { label: 'Good', color: '#30A46C' },
+  { label: 'Strong', color: '#12A594' },
+];
+
+function StrengthMeter({ password }: { password: string }) {
+  const theme = useTheme();
+  const score = strengthOf(password);
+  const level = LEVELS[score];
+  return (
+    <View style={styles.meter} accessibilityLabel={`Password strength: ${level.label}`}>
+      <View style={styles.meterBars}>
+        {[0, 1, 2, 3].map((i) => (
+          <View
+            key={i}
+            style={[styles.meterBar, { backgroundColor: i < Math.max(1, score) ? level.color : theme.backgroundSelected }]}
+          />
+        ))}
+      </View>
+      <Text style={[styles.meterLabel, { color: level.color }]}>{level.label}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  meter: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 4, marginTop: -6 },
+  meterBars: { flex: 1, flexDirection: 'row', gap: 4 },
+  meterBar: { flex: 1, height: 4, borderRadius: 2 },
+  meterLabel: { fontSize: 12, fontWeight: '600', width: 64, textAlign: 'right' },
   footer: { textAlign: 'center', fontSize: 15, marginTop: 8 },
   link: { color: Accent, fontWeight: '600' },
   terms: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingHorizontal: 4 },

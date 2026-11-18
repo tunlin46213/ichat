@@ -3,12 +3,13 @@
  * https://docs.expo.dev/guides/color-schemes/
  */
 
-import { Colors } from '@/constants/theme';
+import { Colors, Semantic } from '@/constants/theme';
+import { useAccent } from '@/context/appearance';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
+/** Colors for the current scheme, the user's accent color, and semantic colors. */
 export function useTheme() {
   const scheme = useColorScheme();
-  const theme = scheme === 'dark' ? 'dark' : 'light';
-
-  return Colors[theme];
+  const accent = useAccent();
+  return { ...Colors[scheme], ...Semantic, accent, scheme };
 }

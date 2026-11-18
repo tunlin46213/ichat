@@ -3,7 +3,6 @@ import Animated, { FadeIn, SlideInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon, type IconName } from '@/components/icon';
-import { Accent } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 /**
@@ -58,8 +57,8 @@ export function ActionSheet({ visible, title, options, onClose }: {
                 i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.separator },
                 pressed && { backgroundColor: theme.backgroundSelected },
               ]}>
-              <Icon name={option.icon} size={20} color={Accent} fallback={option.fallback} />
-              <Text style={styles.optionText}>{option.label}</Text>
+              <Icon name={option.icon} size={20} color={theme.accent} fallback={option.fallback} />
+              <Text style={[styles.optionText, { color: theme.accent }]}>{option.label}</Text>
             </Pressable>
           ))}
         </View>
@@ -71,7 +70,7 @@ export function ActionSheet({ visible, title, options, onClose }: {
             styles.cancel,
             { backgroundColor: pressed ? theme.backgroundSelected : theme.card },
           ]}>
-          <Text style={[styles.optionText, styles.cancelText]}>Cancel</Text>
+          <Text style={[styles.optionText, { color: theme.accent }, styles.cancelText]}>Cancel</Text>
         </Pressable>
       </Animated.View>
     </Modal>
@@ -95,7 +94,7 @@ const styles = StyleSheet.create({
     gap: 10,
     minHeight: 56,
   },
-  optionText: { color: Accent, fontSize: 19 },
+  optionText: { fontSize: 19 },
   cancel: { minHeight: 56, alignItems: 'center', justifyContent: 'center' },
   cancelText: { fontWeight: '600' },
 });

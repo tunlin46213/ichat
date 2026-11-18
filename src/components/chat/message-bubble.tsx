@@ -1,5 +1,6 @@
-import { useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useRef, useState, type ComponentRef } from 'react';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import Svg, { Path } from 'react-native-svg';
 import {
   GestureDetector,
   usePanGesture,
@@ -19,11 +20,13 @@ import Animated, {
   ZoomIn,
 } from 'react-native-reanimated';
 
+import { Avatar } from '@/components/avatar';
 import { Icon } from '@/components/icon';
-import { Accent } from '@/constants/theme';
 import { useAppearance } from '@/context/appearance';
 import { useTheme } from '@/hooks/use-theme';
-import type { Message } from '@/lib/chat';
+import { formatMessageTime, type Message } from '@/lib/chat';
+
+import type { MenuAnchor } from './message-menu';
 import { haptics } from '@/lib/haptics';
 
 import { LinkPreview } from './link-preview';
@@ -33,6 +36,44 @@ import { CallContent, LocationContent } from './special-content';
 
 /** How far to drag right before letting go starts a reply. */
 const REPLY_AT = 56;
+
+// The list is inverted (each cell is flipped vertically), so a negative translateY
+// here means "from below" on screen.
+const FLY = { damping: 16, stiffness: 210 };
+
+/** My new message flies up out of the composer and settles into place. */
+function SendEntering() {
+  'worklet';
+  return {
+    initialValues: {
+      opacity: 0,
+      transform: [{ translateY: -80 }, { translateX: 24 }, { scale: 0.55 }],
+    },
+    animations: {
+      opacity: withTiming(1, { duration: 120 }),
+      transform: [
+        { translateY: withSpring(0, FLY) },
+        { translateX: withSpring(0, FLY) },
+        { scale: withSpring(1, { damping: 12, stiffness: 230 }) },
+      ],
+    },
+  };
+}
+
+/** A new incoming message pops in from the left. */
+function ReceiveEntering() {
+  'worklet';
+  return {
+    initialValues: { opacity: 0, transform: [{ translateX: -28 }, { scale: 0.8 }] },
+    animations: {
+      opacity: withTiming(1, { duration: 160 }),
+      transform: [
+        { translateX: withSpring(0, FLY) },
+        { scale: withSpring(1, { damping: 13, stiffness: 230 }) },
+      ],
+    },
+  };
+}
 
 /** Unique emojis (in first-seen order) with a total count. */
 function summarize(reactions: Record<string, string> | undefined) {
@@ -50,6 +91,8 @@ export function MessageBubble({
   myUid,
   otherName,
   starred,
+  read = false,
+  avatar,
   highlighted,
   onLongPress,
   onReply,
@@ -71,9 +114,14 @@ export function MessageBubble({
   otherName: string;
   /** I starred it (shows a small ★) */
   starred?: boolean;
+  /** mine and the other person has read it (✓✓) */
+  read?: boolean;
+  /** their photo, shown beside the last bubble of each run of their messages */
+  avatar?: { id: string; name: string; uri?: string | null };
   /** briefly outlined after jumping to it from search or the pinned bar */
   highlighted?: boolean;
-  onLongPress: (message: Message) => void;
+  /** with where the bubble is on screen, so the menu can lift it in place */
+  onLongPress: (message: Message, anchor?: MenuAnchor) => void;
   /** swipe right */
   onReply: (message: Message) => void;
   /** double tap (❤️) */
@@ -86,8 +134,11 @@ export function MessageBubble({
   onShowReactions: (message: Message) => void;
 }) {
   const theme = useTheme();
-  const { bubbleColor } = useAppearance();
+  const { bubbleColor, textScale } = useAppearance();
   const type = message.type ?? 'text';
+  const meta = (
+    <BubbleMeta message={message} mine={mine} read={read} starred={!!starred} overlay={false} />
+  );
   const { emojis, count } = summarize(message.reactions);
   const hasReactions = count > 0;
   const replyAuthor = message.replyTo
@@ -96,6 +147,16 @@ export function MessageBubble({
       : otherName
     : '';
   const link = type === 'text' && !message.deleted ? firstUrl(message.text) : null;
+
+  // Long press: measure the bubble first so the menu opens right where it is.
+  const bubbleRef = useRef<ComponentRef<typeof View>>(null);
+  function longPress() {
+    const node = bubbleRef.current;
+    if (!node) return onLongPress(message);
+    node.measureInWindow((x, y, width, height) => {
+      onLongPress(message, width && height ? { x, y, width, height } : undefined);
+    });
+  }
 
   // ── Swipe right to reply, double tap to ❤️ ──
   const offset = useSharedValue(0);
@@ -163,6 +224,7 @@ export function MessageBubble({
   if (message.deleted) {
     return (
       <View style={[styles.row, mine ? styles.right : styles.left, { marginTop: spaced ? 8 : 2 }]}>
+        {!mine && avatar ? <View style={styles.avatarSlot} /> : null}
         <View style={[styles.bubble, styles.deleted, { borderColor: theme.separator }]}>
           <Text style={[styles.deletedText, { color: theme.textSecondary }]}>
             {mine ? 'You unsent a message' : `${otherName} unsent a message`}
@@ -175,7 +237,16 @@ export function MessageBubble({
   return (
     <GestureDetector gesture={gesture}>
       <Animated.View
-        entering={animate ? FadeInDown.springify().damping(16) : undefined}
+        entering={
+          !animate
+            ? undefined
+            : Platform.OS === 'web'
+              ? // Reanimated's web layout animations only support the built-in presets.
+                FadeInDown.springify().damping(16)
+              : mine
+                ? SendEntering
+                : ReceiveEntering
+        }
         style={[
           styles.row,
           mine ? styles.right : styles.left,
@@ -189,12 +260,20 @@ export function MessageBubble({
           <Icon name="arrowshape.turn.up.left" size={16} color={theme.textSecondary} fallback="↩" />
         </Animated.View>
 
+        {!mine && avatar ? (
+          // Their photo next to the last bubble of each run, like iMessage group chats.
+          <View style={styles.avatarSlot}>
+            {tail ? <Avatar id={avatar.id} name={avatar.name} size={28} uri={avatar.uri} /> : null}
+          </View>
+        ) : null}
+
         <Animated.View style={[styles.pressable, mine ? styles.alignEnd : styles.alignStart, slide]}>
           {message.forwarded ? (
             <Text style={[styles.forwarded, { color: theme.textSecondary }]}>↪︎ Forwarded</Text>
           ) : null}
           <Pressable
-            onLongPress={() => onLongPress(message)}
+            ref={bubbleRef}
+            onLongPress={longPress}
             delayLongPress={280}
             accessibilityHint="Long press for reactions and more. Swipe right to reply. Double tap to like."
             style={[
@@ -207,7 +286,8 @@ export function MessageBubble({
                 mime={message.mime ?? 'image/jpeg'}
                 width={message.width}
                 height={message.height}
-                onLongPress={() => onLongPress(message)}
+                thumb={message.thumb}
+                onLongPress={longPress}
                 onOpen={() => onOpenImage(message)}
               />
             ) : type === 'location' ? (
@@ -216,28 +296,31 @@ export function MessageBubble({
               <View
                 style={[
                   styles.bubble,
-                  mine
-                    ? { backgroundColor: bubbleColor, borderBottomRightRadius: tail ? 5 : 18 }
-                    : { backgroundColor: theme.bubbleIncoming, borderBottomLeftRadius: tail ? 5 : 18 },
+                  { backgroundColor: mine ? bubbleColor : theme.bubbleIncoming },
                 ]}>
+                {tail ? <BubbleTail side={mine ? 'right' : 'left'} color={mine ? bubbleColor : theme.bubbleIncoming} /> : null}
                 {message.replyTo ? (
                   <View
                     style={[
                       styles.quote,
                       {
                         backgroundColor: mine ? 'rgba(255,255,255,0.18)' : theme.backgroundSelected,
-                        borderLeftColor: mine ? '#fff' : Accent,
+                        borderLeftColor: mine ? '#fff' : theme.accent,
                       },
                     ]}>
                     <Text
-                      style={[styles.quoteAuthor, { color: mine ? '#fff' : Accent }]}
+                      style={[styles.quoteAuthor, { color: mine ? '#fff' : theme.accent, fontSize: 13 * textScale }]}
                       numberOfLines={1}>
                       {replyAuthor}
                     </Text>
                     <Text
                       style={[
                         styles.quoteText,
-                        { color: mine ? 'rgba(255,255,255,0.85)' : theme.textSecondary },
+                        {
+                          color: mine ? 'rgba(255,255,255,0.85)' : theme.textSecondary,
+                          fontSize: 14 * textScale,
+                          lineHeight: 18 * textScale,
+                        },
                       ]}
                       numberOfLines={2}>
                       {message.replyTo.text || 'Message'}
@@ -257,23 +340,30 @@ export function MessageBubble({
                   <CallContent message={message} mine={mine} onCallBack={onCallBack} />
                 ) : (
                   <>
-                    <LinkifiedText
-                      text={message.text}
-                      linkColor={mine ? '#fff' : Accent}
-                      style={[styles.text, { color: mine ? '#fff' : theme.text }]}
-                    />
+                    {/* Time + ticks sit after the last line, wrapping below when it's full. */}
+                    <View style={styles.textRow}>
+                      <LinkifiedText
+                        text={message.text}
+                        linkColor={mine ? '#fff' : theme.accent}
+                        style={[
+                          styles.text,
+                          { color: mine ? '#fff' : theme.text, fontSize: 17 * textScale, lineHeight: 22 * textScale },
+                        ]}
+                      />
+                      {meta}
+                    </View>
                     {link ? <LinkPreview url={link} mine={mine} /> : null}
                   </>
                 )}
+                {type === 'audio' || type === 'call' ? <View style={styles.metaEnd}>{meta}</View> : null}
               </View>
             )}
+            {type === 'image' || type === 'location' ? (
+              <View style={styles.overlayMeta} pointerEvents="none">
+                <BubbleMeta message={message} mine={mine} read={read} starred={!!starred} overlay />
+              </View>
+            ) : null}
           </Pressable>
-
-          {message.editedAt || starred ? (
-            <Text style={[styles.meta, { color: theme.textSecondary }]}>
-              {[starred ? '★' : null, message.editedAt ? 'Edited' : null].filter(Boolean).join(' · ')}
-            </Text>
-          ) : null}
 
           {hasReactions ? (
             // Keyed by the emojis so the pill pops whenever a reaction changes.
@@ -306,7 +396,93 @@ export function MessageBubble({
   );
 }
 
+// iMessage-style tail paths (from a 15.5 × 17.5 box), drawn in the bubble's color.
+const TAIL_RIGHT = 'M48,35c-7-4-6-8.75-6-17.5C28,17.5,29,35,48,35z';
+const TAIL_LEFT = 'M32.484,35c7-4,6-8.75,6-17.5C52.484,17.5,51.484,35,32.484,35z';
+
+function BubbleTail({ side, color }: { side: 'left' | 'right'; color: string }) {
+  return (
+    <Svg
+      width={15.5}
+      height={17.5}
+      viewBox="32.484 17.5 15.515 17.5"
+      pointerEvents="none"
+      style={side === 'right' ? styles.tailRight : styles.tailLeft}>
+      <Path d={side === 'right' ? TAIL_RIGHT : TAIL_LEFT} fill={color} />
+    </Svg>
+  );
+}
+
+/**
+ * "edited ★ 3:05 PM ✓✓" inside the bubble. Mine: a clock while sending, ✓ once on the
+ * server, ✓✓ once they've read it. `overlay` = on top of a photo / map.
+ */
+function BubbleMeta({ message, mine, read, starred, overlay }: {
+  message: Message;
+  mine: boolean;
+  read: boolean;
+  starred: boolean;
+  overlay: boolean;
+}) {
+  const theme = useTheme();
+  const color = overlay ? '#fff' : mine ? 'rgba(255,255,255,0.78)' : theme.textSecondary;
+  const tickColor = overlay || mine ? (read ? '#fff' : 'rgba(255,255,255,0.7)') : theme.textSecondary;
+  const label = [message.editedAt ? 'edited' : null, formatMessageTime(message.createdAt)]
+    .filter(Boolean)
+    .join(' ');
+  const status = message.pending ? 'Sending' : read ? 'Read' : 'Sent';
+  return (
+    <View
+      style={[styles.meta, overlay && styles.metaPill]}
+      accessible
+      accessibilityLabel={`${label}${mine ? `, ${status}` : ''}${starred ? ', starred' : ''}`}>
+      {starred ? <Text style={[styles.metaText, { color }]}>★</Text> : null}
+      <Text style={[styles.metaText, { color }]}>{label}</Text>
+      {mine ? (
+        message.pending ? (
+          <Icon name="clock" size={10} color={tickColor} fallback="🕓" />
+        ) : (
+          <View style={styles.ticks}>
+            <Icon name="checkmark" size={10} color={tickColor} fallback="✓" />
+            {read ? (
+              <View style={styles.secondTick}>
+                <Icon name="checkmark" size={10} color={tickColor} fallback="✓" />
+              </View>
+            ) : null}
+          </View>
+        )
+      ) : null}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  tailRight: { position: 'absolute', right: -5, bottom: 0 },
+  tailLeft: { position: 'absolute', left: -5, bottom: 0 },
+  avatarSlot: { width: 28, marginRight: 6, alignSelf: 'flex-end' },
+  textRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', justifyContent: 'flex-end' },
+  meta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    marginLeft: 8,
+    marginBottom: -1,
+    flexGrow: 1,
+    justifyContent: 'flex-end',
+  },
+  metaEnd: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 2 },
+  metaPill: {
+    flexGrow: 0,
+    marginLeft: 0,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  overlayMeta: { position: 'absolute', right: 8, bottom: 8 },
+  metaText: { fontSize: 11, fontWeight: '500', fontVariant: ['tabular-nums'] },
+  ticks: { flexDirection: 'row', alignItems: 'center' },
+  secondTick: { marginLeft: -6 },
   row: { flexDirection: 'row', alignItems: 'center' },
   left: { justifyContent: 'flex-start' },
   right: { justifyContent: 'flex-end' },
@@ -363,5 +539,4 @@ const styles = StyleSheet.create({
   reactionsTheirs: { right: -6 },
   reactionEmoji: { fontSize: 13 },
   reactionCount: { fontSize: 12, fontWeight: '600' },
-  meta: { fontSize: 11, marginTop: 2, marginHorizontal: 6 },
 });

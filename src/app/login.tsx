@@ -41,6 +41,8 @@ export default function LoginScreen() {
           value={email}
           onChangeText={setEmail}
           placeholder="Email"
+          icon="envelope.fill"
+          iconFallback="✉"
           autoCapitalize="none"
           autoComplete="email"
           keyboardType="email-address"
@@ -54,6 +56,8 @@ export default function LoginScreen() {
           value={password}
           onChangeText={setPassword}
           placeholder="Password"
+          icon="lock.fill"
+          iconFallback="🔒"
           secureTextEntry
           autoComplete="current-password"
           textContentType="password"

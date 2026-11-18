@@ -1,7 +1,7 @@
 # iChat — Project Status & Handoff
 
 > **Session အသစ်စတိုင်း ဒီဖိုင်ကို အရင်ဖတ်ပါ။** ဘာလုပ်ပြီးပြီ၊ ဘာကျန်သေးလဲ၊ account/URL တွေ၊ build/deploy workflow တွေ အကုန် ဒီမှာ ရှိပါတယ်။
-> Last updated: 2026-11-18 · Last commit: `adf0b48`
+> Last updated: 2026-11-18 · Last commit: see `git log` (build #4 batch)
 
 ---
 
@@ -136,12 +136,16 @@ users/{uid}/private/push    tokens[] (Expo), fcmTokens[] (web)
 blocks/{uid}                blocked[]                      (owner only)
 reports/{id}                reporterId, reportedUserId, reason, chatId, messageId, messageText (create only)
 chats/{uidA_uidB}           members[2] sorted, names{}, lastMessage, lastSenderId, updatedAt,
-                            unread{uid:n}, lastRead{uid:ts}, typing{uid:ts}, hiddenAt{uid:ts}, pinned{id,text,senderId}
-chats/{id}/messages/{id}    type text|image|audio|call|location, text, senderId, createdAt, replyTo, reactions{uid:emoji},
+                            unread{uid:n}, lastRead{uid:ts}, typing{uid:ts}, hiddenAt{uid:ts}, pinned{id,text,senderId},
+                            pinnedAt{uid:ts}, archivedAt{uid:ts}   (per-user list pin / archive)
+chats/{id}/messages/{id}    type text|image|audio|call|location, text, senderId, createdAt, replyTo, reactions{uid:emoji}, thumb (image blur-up),
                             editedAt, deleted, mediaId, mime, width, height, durationMs, waveform[],
                             callType voice|video, callStatus answered|missed, lat, lng, forwarded
 users/{uid}/private/starred items{chatId__messageId: {chatId, messageId, otherId, otherName, senderId, preview, starredAt}}
 chats/{id}/media/{id}       data (base64 ≤ ~900KB), mime, senderId, createdAt
+stories/{id}                ownerId, kind photo|text, text?, background?, width, height, createdAt, expiresAt (+24h), viewers{uid:ts}
+                            reactions{uid:emoji}
+storyMedia/{id}             ownerId, data (base64 1080px JPEG), mime   (same id as the story)
 ```
 Rules အဓိကချက်: chat members ပဲ ဖတ်/ရေး; block ထားရင် message create ပိတ်; reaction က ကိုယ့် key ပဲ; edit ၁၅ မိနစ်အတွင်း; unsend sender ပဲ; media က `existsAfter` (same batch)။
 
@@ -171,16 +175,27 @@ Rules အဓိကချက်: chat members ပဲ ဖတ်/ရေး; block �
 - [x] Chat screen premium (build #3 မှာ အတည်ပြုရန်): hold-to-record mic (ဖိ=record, လွှတ်=ပို့, ဘယ်ဆွဲ=cancel); photo viewer (pinch/double-tap zoom, အောက်ဆွဲပိတ်, ဘေးတိုက်လှန်, Save to Photos — `expo-media-library` အသစ်); Liquid Glass composer + gradient send + emoji panel; double-tap ❤️ burst + reaction pill pop + who-reacted sheet; Messenger-style seen avatar
 - ⚠️ Gesture hook config (`usePanGesture({...})` စသည်) ထဲမှာ object spread မသုံးရ — worklets Babel plugin က bundle ကို fail စေတယ် (`npx expo export` မှ ဖမ်းမိ)
 - [x] Double-check (chat screen premium): ၆၀s limit ပြည့်ပို့ပြီးမှ hint အမှားမပေါ်; photo viewer counter/Save က web မှာ page မှန် (onScroll); double-tap ❤️ ကို text message ပဲ (call bubble မှာ call မစ); chat preview icon ကို app ထုတ်တဲ့ preview အတိအကျပဲ ကိုက်
+- [x] **Premium UI v3 (2026-11-18, build #4 မှာ အတည်ပြုရန်; uncommitted):** Login/Register/Forgot — gradient + floating blobs, animated logo, frosted card (`expo-blur` အသစ်), field icon + password eye, strength meter; **Onboarding** (`src/app/onboarding.tsx`, register ပြီးမှ — photo → name → tips; `needsOnboarding` in auth, Protected guard); **Contact profile** — gradient hero, Call/Video/Search/Mute, Shared Photos/Voice/Links (latest 300 msgs, client-side filter, index မလို), per-chat theme; **Per-chat theme + mute** (`ChatAppearanceScope`, AsyncStorage `chats{}`; mute = banner/chime မပြ, chat list 🔕); **ကိုယ်ပိုင် call screen** (`src/calls/call-screen.tsx`: blurred photo bg, ripple, glass buttons, PiP, timer, speaker; `custom.video` flag in call data; တစ်ဖက်ချရင် auto leave); **iOS long-press menu** (blur + bubble နေရာမှာ lift, `measureInWindow`); send fly-up animation + `send.wav` whoosh (silent switch လေးစား); scroll လုပ်ရင် floating day pill
+- [x] **Stories (2026-11-18, build #4 မှာ အတည်ပြုရန်; uncommitted):** chat list row မှာ "Your Story ➕" (Camera/Photo/Text); gradient ring = မကြည့်ရသေး, မီးခိုး = ကြည့်ပြီး, အစိမ်းစက် = online; `story/new` (photo+caption / text+gradient bg), `story/[uid]` viewer (5s progress, tap ဘယ်/ညာ, ဖိ=pause, အောက်ဆွဲ=ပိတ်, reply/emoji → chat ထဲ `replyTo {id: story_…}`, ကိုယ့် story မှာ Seen by + Delete, **reactions** (`reactions{uid:emoji}`, quick 6 + `+` 24 emoji, floating burst, Seen-by sheet မှာ emoji filter chips), နောက်တစ်ယောက်ဆီ auto ဆက်); `StoriesProvider` (expiresAt > now live query; ၂၄ နာရီ app ဘက်က ဖျောက်; ကိုယ့် story အဟောင်းကို app ဖွင့်တိုင်း ဖျက်); **rules အသစ် (`stories`, `storyMedia`) → console မှာ Publish လို**
+- [x] Network fixes: ConnectingScreen (splash ၃s ကျော်), tab "0" badge (`hidden` မအလုပ်လုပ် → conditional render), offline ဗလာ cache ကို "No Conversations" မပြ
+- [x] **Enterprise UI pass (2026-11-18, uncommitted):** (1) design tokens `Semantic/Radius/Type/Elevation/Motion` in `constants/theme.ts`, `useTheme()` က `accent`, `danger`… ပါ ပြန်ပေး; cards → `Radius.md` + `Elevation.card`; (2) Appearance: Theme System/Light/Dark (`useResolvedColorScheme`, native `Appearance.setColorScheme`), Accent color = bubble color (app-wide: tabs, links, buttons, nav), Text size XS–XL (`textScale`: bubble/quote/composer/list); (3) bubble ထဲ အချိန် + ✓ / ✓✓ (read) / 🕓 (sending), edited/★ ပါ; ပုံ/map ပေါ်မှာ pill; "Sending…/Delivered" စာသား ဖြုတ်; (4) `components/toast.tsx` (`toast.success/error/info`) — copy/pin/star/forward/mute/archive/errors; (5) chat pin (`pinnedAt.{uid}`, max 5) + archive (`archivedAt.{uid}`, Archived row) + mark unread — chat doc fields, rules ပြောင်းစရာမလို; (6) swipe ညာ→ Unread/Pin, ဘယ်→ Mute/Archive/Delete; (7) drafts (`lib/drafts.ts`, AsyncStorage) — chat list မှာ "Draft:" အနီ
+- [x] **Aurora Glass design (2026-11-18, uncommitted):** `components/aurora.tsx` (accent/pink/purple radial glow), theme tokens `glass/glassStrong/glassCard/glassBorder/glassHairline`; chat list → glass card rows (radius 24, unread = accent border + glow + ဘယ်ဘက် bar, pinned 📌 top row), greeting ("Good evening, Tun 👋" + unread/active summary), story ring 76px, glass chips/search; Settings → aurora + glass cards; iOS chats/settings header `headerTransparent` + blur; web tab bar frosted
+- [x] **Chat screen aurora + smart (2026-11-18, uncommitted):** "Glow" wallpaper (accent radial, **default** — saved 'none' ရှိရင် Appearance မှာ Glow ရွေး); chat header `headerTransparent` + blur, content `paddingTop: headerHeight` (inverted list header အောက်မဝင်), KAV offset 0; **smart replies** (`lib/smart-replies.ts` EN+မြန်မာ keyword rules, image/voice/location/missed call; composer အပေါ် chips; draft ရှိရင်/reply/edit လုပ်နေရင် မပြ); **unread divider + jump** (ဖွင့်ချိန် unread count မှတ်, ≥6 ဆို scroll); chat list **Pinned / Today / Earlier** section headers
+- [x] **Smart design pass (2026-11-18, uncommitted):** (1) message effects (`lib/effects.ts` + `chat/screen-effect.tsx`: 🎈 birthday/မွေးနေ့, 🎉 congrats/ဂုဏ်ယူ, 🎆 new year, ❤️ love/ချစ်တယ်; chat ဖွင့်ထားတုန်း message အသစ်တစ်ခါပဲ; Reduce Motion မှာ မပြ); (2) time-of-day aurora + Glow (`timeOfDayColors`); (3) contact tint (`colorsFor(otherId)` → glow + header ring); (4) live status: typing dots / recording voice… / choosing a photo… (`chats.activity.{uid}` {kind, at}, 20s fresh); (5) SVG iMessage tails + incoming avatar per run; (6) send↔mic spin morph, web tab bounce; (8) call minimize → floating pill (timer, mute, end); (9) photo blur-up (`thumb` ~24px in message) + shimmer skeleton; (10) "People you may know" (users by lastSeen, Say hi)
+- [x] **Contact profile v2 (2026-11-18):** per-chat CHAT THEME ဖြုတ် (`chat-theme-picker.tsx` ဖျက်; `ChatAppearanceScope` နဲ့ saved prefs က ဆက်အလုပ်လုပ်); aurora + glass cards; quick actions ညှပ်နေတာ ပြင် (ScalePressable က style ကို အတွင်း view ပေါ်ချ → wrapper View flex:1); voice list ၃ ခု + "Show all"
+- [x] **Profile hero v3 + bug fix (2026-11-18):** blurred-photo cover under transparent header (no photo → contact colors), gradient avatar ring + glow, presence pill; fix: unread divider/jump never showed (own markRead write zeroed unread before the chat snapshot) → unread count taken from chat list at open
+- [ ] **Build #4** — UI v3 / stories / enterprise / aurora / smart pass အားလုံးပါ; `expo-blur` native module အသစ်ကြောင့် build အသစ်လို → Actions Run workflow → Impactor နဲ့ ဖုန်း ၂ လုံး install
 - [ ] **Build #3 (`adf0b48`)** — Actions မှာ Run workflow → Impactor နဲ့ ဖုန်း ၂ လုံး install → call / header / keyboard / hold-to-record / photo viewer / location စမ်းရန်
-- [ ] **Firestore rules ကို ပြန် Publish ရန်** — `call` / `location` message type အသစ် (မ publish ရင် call history နဲ့ location ပို့တာ permission-denied)
+- [ ] **Firestore rules ကို ပြန် Publish ရန်** — `call`/`location` types + `stories`/`storyMedia` + story `reactions` (user က stories ကို publish ပြီး; reactions update ပြီးနောက် ထပ် publish လုပ်မလုပ် မသေချာ)
 - [ ] Stream secret **rotate** (dashboard regenerate → `wrangler secret put STREAM_API_SECRET`)
 - [ ] (optional) Web push: VAPID key → `webPushVapidKey`; `FIREBASE_SERVICE_ACCOUNT` secret; `npm run deploy:web`
 - [ ] Workflow ထဲ actions v4 → Node 24 compatible version update (Node 20 deprecation warning)
-- [ ] မလုပ်ရသေးတဲ့ feature: chat ထဲ search, မြန်မာဘာသာ UI, group chat
+- [ ] မလုပ်ရသေးတဲ့ feature: မြန်မာဘာသာ UI, Face ID app lock, long-press chat preview, group chat
 - [ ] အနာဂတ် ($99 ဝယ်ရင်): EAS build, push (Expo), CallKit/VoIP ringing (`@stream-io/react-native-callingx` + `@react-native-firebase/*`), App Store/TestFlight
 
 ## 11. သိထားရမယ့် gotchas
 
+- App ဖွင့်ရင် Firebase Auth က saved login ကို Google server နဲ့ reload စစ်တယ် (RN timeout **60s**) → mobile data နှေး/ပိတ်ရင် splash မှာ ရပ် → ၃s ကျော်ရင် `ConnectingScreen` ပြ (Mobile Data ခွင့်ပြုချက် / VPN hint)
 - Firestore က RN မှာ default WebChannel နဲ့ "Could not reach backend" ဖြစ် → `experimentalForceLongPolling` (lib/firebase.ts)
 - React Compiler lint: reanimated shared values ကို `.set()/.get()` သုံး; effect ထဲ sync setState မလုပ်
 - Typed routes က `(tabs)/chats/index` ကို `/chats/index` လို့ ထုတ်တယ် → `'/chats' as Href` cast သုံး

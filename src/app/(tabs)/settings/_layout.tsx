@@ -9,6 +9,8 @@ export default function SettingsLayout() {
         options={{
           title: 'Settings',
           headerLargeTitleEnabled: true,
+          headerTransparent: Platform.OS === 'ios',
+          headerBlurEffect: 'systemChromeMaterial',
           // Web draws its own iOS-style large title (LargeTitleHeader) inside the screen.
           headerShown: Platform.OS !== 'web',
         }}

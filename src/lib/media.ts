@@ -24,7 +24,13 @@ import { notifyRecipient } from '@/lib/notify';
 const MAX_BASE64 = 900_000; // ≈ 650 KB binary, leaves room for the other fields
 export const MAX_VOICE_MS = 60_000;
 
-export type PickedImage = { base64: string; width: number; height: number };
+export type PickedImage = {
+  base64: string;
+  width: number;
+  height: number;
+  /** tiny (~24 px) JPEG shown blurred while the full photo loads */
+  thumb?: string;
+};
 
 function mediaError(code: string) {
   return Object.assign(new Error(code), { code });
@@ -93,7 +99,23 @@ export async function pickImage(
  */
 export async function pickImages(source: 'library' | 'camera', maxSide = 1280) {
   const assets = await launchPicker(source, true);
-  return assets.map((a) => () => compress(a.uri, a.width, a.height, maxSide));
+  return assets.map((a) => async (): Promise<PickedImage> => {
+    const image = await compress(a.uri, a.width, a.height, maxSide);
+    return { ...image, thumb: await tinyThumb(a.uri, a.width, a.height) };
+  });
+}
+
+/** A ~24 px base64 JPEG (well under 1 KB) for the blur-up placeholder. */
+async function tinyThumb(uri: string, width: number, height: number) {
+  try {
+    const scale = 24 / Math.max(width, height, 1);
+    const context = ImageManipulator.manipulate(uri);
+    context.resize({ width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) });
+    const saved = await (await context.renderAsync()).saveAsync({ compress: 0.5, format: SaveFormat.JPEG, base64: true });
+    return saved.base64 && saved.base64.length < 2000 ? saved.base64 : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Reads a recorded file (file:// on iOS, blob: on web) as base64. */
@@ -114,7 +136,7 @@ export async function sendMediaMessage(
   senderId: string,
   recipientId: string,
   media:
-    | { type: 'image'; base64: string; width: number; height: number }
+    | { type: 'image'; base64: string; width: number; height: number; thumb?: string }
     | {
         type: 'audio';
         /** a recording to read, or base64 already in hand (forwarding) */
@@ -149,7 +171,7 @@ export async function sendMediaMessage(
           durationMs: Math.round(media.durationMs),
           ...(media.waveform?.length ? { waveform: media.waveform } : {}),
         }
-      : { width: media.width, height: media.height }),
+      : { width: media.width, height: media.height, ...(media.thumb ? { thumb: media.thumb } : {}) }),
     ...(forwarded ? { forwarded: true } : {}),
   });
   const preview = previewFor({
