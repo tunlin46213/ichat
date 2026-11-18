@@ -1,7 +1,7 @@
 # iChat — Project Status & Handoff
 
 > **Session အသစ်စတိုင်း ဒီဖိုင်ကို အရင်ဖတ်ပါ။** ဘာလုပ်ပြီးပြီ၊ ဘာကျန်သေးလဲ၊ account/URL တွေ၊ build/deploy workflow တွေ အကုန် ဒီမှာ ရှိပါတယ်။
-> Last updated: 2026-11-18 · Last commit: see `git log` (build #4 batch)
+> Last updated: 2026-11-18 · Last commit: `d544879`
 
 ---
 
@@ -184,7 +184,7 @@ Rules အဓိကချက်: chat members ပဲ ဖတ်/ရေး; block �
 - [x] **Smart design pass (2026-11-18, uncommitted):** (1) message effects (`lib/effects.ts` + `chat/screen-effect.tsx`: 🎈 birthday/မွေးနေ့, 🎉 congrats/ဂုဏ်ယူ, 🎆 new year, ❤️ love/ချစ်တယ်; chat ဖွင့်ထားတုန်း message အသစ်တစ်ခါပဲ; Reduce Motion မှာ မပြ); (2) time-of-day aurora + Glow (`timeOfDayColors`); (3) contact tint (`colorsFor(otherId)` → glow + header ring); (4) live status: typing dots / recording voice… / choosing a photo… (`chats.activity.{uid}` {kind, at}, 20s fresh); (5) SVG iMessage tails + incoming avatar per run; (6) send↔mic spin morph, web tab bounce; (8) call minimize → floating pill (timer, mute, end); (9) photo blur-up (`thumb` ~24px in message) + shimmer skeleton; (10) "People you may know" (users by lastSeen, Say hi)
 - [x] **Contact profile v2 (2026-11-18):** per-chat CHAT THEME ဖြုတ် (`chat-theme-picker.tsx` ဖျက်; `ChatAppearanceScope` နဲ့ saved prefs က ဆက်အလုပ်လုပ်); aurora + glass cards; quick actions ညှပ်နေတာ ပြင် (ScalePressable က style ကို အတွင်း view ပေါ်ချ → wrapper View flex:1); voice list ၃ ခု + "Show all"
 - [x] **Profile hero v3 + bug fix (2026-11-18):** blurred-photo cover under transparent header (no photo → contact colors), gradient avatar ring + glow, presence pill; fix: unread divider/jump never showed (own markRead write zeroed unread before the chat snapshot) → unread count taken from chat list at open
-- [ ] **Build #4** — UI v3 / stories / enterprise / aurora / smart pass အားလုံးပါ; `expo-blur` native module အသစ်ကြောင့် build အသစ်လို → Actions Run workflow → Impactor နဲ့ ဖုန်း ၂ လုံး install
+- [ ] **Build #4 (`d544879`)** — UI v3 / stories / enterprise / aurora / smart pass အားလုံးပါ; `expo-blur` native module အသစ်ကြောင့် build အသစ်လို → Actions Run workflow → Impactor နဲ့ ဖုန်း ၂ လုံး install
 - [ ] **Build #3 (`adf0b48`)** — Actions မှာ Run workflow → Impactor နဲ့ ဖုန်း ၂ လုံး install → call / header / keyboard / hold-to-record / photo viewer / location စမ်းရန်
 - [ ] **Firestore rules ကို ပြန် Publish ရန်** — `call`/`location` types + `stories`/`storyMedia` + story `reactions` (user က stories ကို publish ပြီး; reactions update ပြီးနောက် ထပ် publish လုပ်မလုပ် မသေချာ)
 - [ ] Stream secret **rotate** (dashboard regenerate → `wrangler secret put STREAM_API_SECRET`)
