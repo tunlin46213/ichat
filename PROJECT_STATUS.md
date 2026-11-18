@@ -1,7 +1,7 @@
 # iChat — Project Status & Handoff
 
 > **Session အသစ်စတိုင်း ဒီဖိုင်ကို အရင်ဖတ်ပါ။** ဘာလုပ်ပြီးပြီ၊ ဘာကျန်သေးလဲ၊ account/URL တွေ၊ build/deploy workflow တွေ အကုန် ဒီမှာ ရှိပါတယ်။
-> Last updated: 2026-11-18 · Last commit: `ae27003`
+> Last updated: 2026-11-18 · Last commit: `adf0b48`
 
 ---
 
@@ -9,10 +9,10 @@
 
 - **ဘာလဲ:** iPhone အတွက် 1:1 chat app (စာ၊ ပုံ၊ voice message၊ voice/video call)
 - **ဘယ်သူတွေ သုံးမလဲ:** လူ **၃ ယောက်** (iPhone ပဲ၊ Android မရှိ)
-- **Developer ပတ်ဝန်းကျင်:** Windows (Mac မရှိ)၊ VS Code၊ Claude Code
+- **Developer ပတ်ဝန်းကျင်:** **Arch Linux** (2026-11-18 ကစ; အရင် Windows)၊ VS Code၊ Claude Code — sideload ကို **Impactor** (Flatpak) နဲ့
 - **Budget:** **$0** — Apple Developer ($99) မဝယ်၊ Firebase Blaze (ကတ်) မသုံး
 - **Repo:** https://github.com/tunlin46213/ichat (branch `main`)
-- **Local path:** `E:\Depolyment\ios\ichat`
+- **Local path:** `/home/lynn/ichat` (Linux) · အရင် `E:\Depolyment\ios\ichat` (Windows)
 - **မူလ plan:** `E:\Depolyment\ios\chat-voice-app-plan.md`
 - **User setup guide (Burmese):** [SETUP.md](SETUP.md)
 - **User နဲ့ မြန်မာလို ပြောပါ။**
@@ -171,6 +171,7 @@ Rules အဓိကချက်: chat members ပဲ ဖတ်/ရေး; block �
 - [x] Chat screen premium (build #3 မှာ အတည်ပြုရန်): hold-to-record mic (ဖိ=record, လွှတ်=ပို့, ဘယ်ဆွဲ=cancel); photo viewer (pinch/double-tap zoom, အောက်ဆွဲပိတ်, ဘေးတိုက်လှန်, Save to Photos — `expo-media-library` အသစ်); Liquid Glass composer + gradient send + emoji panel; double-tap ❤️ burst + reaction pill pop + who-reacted sheet; Messenger-style seen avatar
 - ⚠️ Gesture hook config (`usePanGesture({...})` စသည်) ထဲမှာ object spread မသုံးရ — worklets Babel plugin က bundle ကို fail စေတယ် (`npx expo export` မှ ဖမ်းမိ)
 - [x] Double-check (chat screen premium): ၆၀s limit ပြည့်ပို့ပြီးမှ hint အမှားမပေါ်; photo viewer counter/Save က web မှာ page မှန် (onScroll); double-tap ❤️ ကို text message ပဲ (call bubble မှာ call မစ); chat preview icon ကို app ထုတ်တဲ့ preview အတိအကျပဲ ကိုက်
+- [ ] **Build #3 (`adf0b48`)** — Actions မှာ Run workflow → Impactor နဲ့ ဖုန်း ၂ လုံး install → call / header / keyboard / hold-to-record / photo viewer / location စမ်းရန်
 - [ ] **Firestore rules ကို ပြန် Publish ရန်** — `call` / `location` message type အသစ် (မ publish ရင် call history နဲ့ location ပို့တာ permission-denied)
 - [ ] Stream secret **rotate** (dashboard regenerate → `wrangler secret put STREAM_API_SECRET`)
 - [ ] (optional) Web push: VAPID key → `webPushVapidKey`; `FIREBASE_SERVICE_ACCOUNT` secret; `npm run deploy:web`
