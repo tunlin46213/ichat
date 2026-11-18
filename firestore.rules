@@ -105,7 +105,16 @@ service cloud.firestore {
             || (type in ['image', 'audio']
                 && d.mediaId is string
                 // existsAfter: the media doc is created in the same batch.
-                && existsAfter(/databases/$(database)/documents/chats/$(chatId)/media/$(d.mediaId)));
+                && existsAfter(/databases/$(database)/documents/chats/$(chatId)/media/$(d.mediaId)))
+            // Call log entry, written by the caller when the call ends.
+            || (type == 'call'
+                && d.callType in ['voice', 'video']
+                && d.callStatus in ['answered', 'missed']
+                && d.durationMs is number)
+            // Shared map location.
+            || (type == 'location'
+                && d.lat is number && d.lat >= -90 && d.lat <= 90
+                && d.lng is number && d.lng >= -180 && d.lng <= 180);
         }
 
         allow read: if signedIn() && request.auth.uid in chatMembers();

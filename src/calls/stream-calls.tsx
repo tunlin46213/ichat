@@ -1,17 +1,19 @@
 // Loaded only in development/production builds (see calls-provider.native.tsx).
 import {
+  CallingState,
   RingingCallContent,
   StreamCall,
   StreamVideo,
   StreamVideoClient,
   useCalls as useStreamCalls,
+  type Call,
 } from '@stream-io/video-react-native-sdk';
 import { useEffect, useState, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/context/auth';
-import { useUserProfile } from '@/hooks/use-user-profile';
+import { chatIdFor, sendCallMessage } from '@/lib/chat';
 import { fetchStreamToken } from '@/lib/notify';
 import { streamApiKey } from '@/lib/runtime';
 
@@ -19,6 +21,32 @@ import { CallsContext } from './context';
 
 // Issued by the Cloudflare worker (worker/src/index.ts → /stream-token).
 const tokenProvider = fetchStreamToken;
+
+/** Settles when the last client we dropped has finished disconnecting. */
+let disconnecting: Promise<unknown> = Promise.resolve();
+
+/**
+ * Writes "📞 Voice call · 3:24" or "Missed voice call" into the chat once the call I
+ * started is over. Only the caller logs it, so each call appears once.
+ */
+function logCallWhenOver(call: Call, myUid: string, otherId: string, video: boolean) {
+  let joinedAt = 0;
+  let done = false;
+  let sub: { unsubscribe: () => void } | undefined = undefined;
+  sub = call.state.callingState$.subscribe((state) => {
+    if (done) return;
+    if (state === CallingState.JOINED && !joinedAt) joinedAt = Date.now();
+    if (state !== CallingState.LEFT && state !== CallingState.RECONNECTING_FAILED) return;
+    done = true;
+    // The first value can arrive synchronously, before `sub` is assigned.
+    setTimeout(() => sub?.unsubscribe(), 0);
+    sendCallMessage(chatIdFor(myUid, otherId), myUid, otherId, {
+      video,
+      answered: joinedAt > 0,
+      durationMs: joinedAt ? Date.now() - joinedAt : 0,
+    }).catch((err) => console.warn('Could not log call', err));
+  });
+}
 
 function newCallId() {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
@@ -30,29 +58,34 @@ function newCallId() {
  */
 export function StreamCallsProvider({ children }: { children: ReactNode }) {
   const { user, displayName } = useAuth();
-  const profile = useUserProfile(user?.uid);
   const [client, setClient] = useState<StreamVideoClient | null>(null);
   const uid = user?.uid;
   const name = displayName ?? 'User';
-  const image = profile?.avatarUrl ?? undefined;
+  // No `image`: avatars are data: URIs (tens of KB), too big for Stream user data.
 
   useEffect(() => {
     if (!uid || !streamApiKey) return;
-    // getOrCreateInstance keeps one client across re-renders and app backgrounding.
-    const instance = StreamVideoClient.getOrCreateInstance({
-      apiKey: streamApiKey,
-      user: { id: uid, name, image },
-      tokenProvider,
-    });
-    // Publish it asynchronously (after this effect) so React doesn't re-render mid-effect.
     let active = true;
-    Promise.resolve().then(() => active && setClient(instance));
+    let instance: StreamVideoClient | null = null;
+    // Wait until the previous client (e.g. before a name change) has fully disconnected.
+    // getOrCreateInstance looks clients up by user id, and a client is only removed from
+    // that lookup once disconnectUser() finishes — creating too early returned the dying
+    // client, which never reconnected, so every call failed.
+    const created = disconnecting.then(() => {
+      if (!active) return;
+      instance = StreamVideoClient.getOrCreateInstance({
+        apiKey: streamApiKey!,
+        user: { id: uid, name },
+        tokenProvider,
+      });
+      setClient(instance);
+    });
     return () => {
       active = false;
-      instance.disconnectUser().catch(() => {});
       setClient(null);
+      disconnecting = created.then(() => instance?.disconnectUser()).catch(() => {});
     };
-  }, [uid, name, image]);
+  }, [uid, name]);
 
   async function startCall(other: { id: string; name: string }, { video = false } = {}) {
     if (!client || !uid) throw new Error('Calls are not connected yet.');
@@ -66,19 +99,22 @@ export function StreamCallsProvider({ children }: { children: ReactNode }) {
       video,
       data: { members: [{ user_id: uid }, { user_id: other.id }] },
     });
+    logCallWhenOver(call, uid, other.id, video);
   }
 
-  if (!client) {
-    return <CallsContext value={{ startCall: null }}>{children}</CallsContext>;
-  }
-
+  // `children` (the whole app) always sits at the same place in the tree. Wrapping it in
+  // <StreamVideo> only once the client existed changed its parent, which remounted every
+  // screen and reset navigation whenever the client connected or was recreated.
+  // Nothing outside this file uses Stream hooks, so only the call UI needs the provider.
   return (
-    <StreamVideo client={client}>
-      <CallsContext value={{ startCall }}>
-        {children}
-        <RingingCalls />
-      </CallsContext>
-    </StreamVideo>
+    <CallsContext value={{ startCall: client ? startCall : null }}>
+      {children}
+      {client ? (
+        <StreamVideo client={client}>
+          <RingingCalls />
+        </StreamVideo>
+      ) : null}
+    </CallsContext>
   );
 }
 

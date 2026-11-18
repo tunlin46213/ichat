@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+
 import type { IconName } from '@/components/icon';
 
 /**
@@ -7,6 +9,7 @@ import type { IconName } from '@/components/icon';
  */
 export function LargeTitleHeader(_props: {
   title: string;
+  leading?: ReactNode;
   action?: { icon: IconName; label: string; onPress: () => void };
   search?: { value: string; onChangeText: (text: string) => void; placeholder?: string };
 }) {

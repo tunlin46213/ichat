@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -6,8 +7,10 @@ import { Accent, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 /** iOS large-title header for the browser: big bold title, optional action and search field. */
-export function LargeTitleHeader({ title, action, search }: {
+export function LargeTitleHeader({ title, action, search, leading }: {
   title: string;
+  /** shown at the top left (e.g. my profile photo) */
+  leading?: ReactNode;
   action?: { icon: IconName; label: string; onPress: () => void };
   search?: { value: string; onChangeText: (text: string) => void; placeholder?: string };
 }) {
@@ -17,6 +20,7 @@ export function LargeTitleHeader({ title, action, search }: {
   return (
     <View style={[styles.large, { paddingTop: top }]}>
       <View style={styles.topBar}>
+        <View>{leading}</View>
         {action ? (
           <Pressable
             onPress={action.onPress}
@@ -77,7 +81,7 @@ export function WebBackButton({ label, onPress }: { label: string; onPress: () =
 
 const styles = StyleSheet.create({
   large: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.two },
-  topBar: { height: 44, flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center' },
+  topBar: { height: 44, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   actionButton: { padding: 4 },
   largeTitle: { fontSize: 34, fontWeight: '700', letterSpacing: 0.4, marginBottom: Spacing.two },
   search: {

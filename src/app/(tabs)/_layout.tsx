@@ -1,16 +1,9 @@
 import { NativeTabs } from 'expo-router/native-tabs';
 
-import { ChatsProvider, useChats } from '@/context/chats';
+import { useChats } from '@/context/chats';
 
+// ChatsProvider is in the root layout (it also feeds the in-app banner).
 export default function TabsLayout() {
-  return (
-    <ChatsProvider>
-      <Tabs />
-    </ChatsProvider>
-  );
-}
-
-function Tabs() {
   const { totalUnread } = useChats();
   return (
     <NativeTabs>

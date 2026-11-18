@@ -50,6 +50,23 @@ const SF_TO_IONICONS: Record<string, IoniconName> = {
   'phone.down.fill': 'call',
   'mic.slash.fill': 'mic-off',
   'speaker.wave.2.fill': 'volume-high',
+  'video.fill': 'videocam',
+  'mappin.circle.fill': 'location',
+  'location.fill': 'navigate',
+  star: 'star-outline',
+  'star.fill': 'star',
+  'star.slash': 'star-outline',
+  pin: 'pin-outline',
+  'pin.fill': 'pin',
+  'pin.slash': 'pin-outline',
+  'arrowshape.turn.up.right': 'arrow-redo-outline',
+  'arrowshape.turn.up.right.fill': 'arrow-redo',
+  'paintbrush.fill': 'color-palette',
+  'photo.on.rectangle': 'images-outline',
+  'checkmark.circle': 'checkmark-circle-outline',
+  'square.and.arrow.down': 'download-outline',
+  'face.smiling': 'happy-outline',
+  'keyboard': 'keypad-outline',
 };
 
 /** Web version of Icon: maps SF Symbol names to Ionicons. Same props as icon.tsx. */

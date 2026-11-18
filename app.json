@@ -61,6 +61,24 @@
         }
       ],
       [
+        "expo-media-library",
+        {
+          "photosPermission": "iChat lets you choose photos to send in chats and to use as your profile picture.",
+          "savePhotosPermission": "iChat saves photos from your chats to your library when you tap Save.",
+          "isAccessMediaLocationEnabled": false
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "iChat uses your location only when you choose to share it in a chat.",
+          "locationAlwaysAndWhenInUsePermission": false,
+          "locationAlwaysPermission": false,
+          "isIosBackgroundLocationEnabled": false,
+          "isAndroidBackgroundLocationEnabled": false
+        }
+      ],
+      [
         "expo-notifications",
         {
           "color": "#208AEF"

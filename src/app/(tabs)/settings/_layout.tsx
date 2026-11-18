@@ -14,6 +14,8 @@ export default function SettingsLayout() {
         }}
       />
       <Stack.Screen name="blocked" options={{ title: 'Blocked Users' }} />
+      <Stack.Screen name="appearance" options={{ title: 'Appearance' }} />
+      <Stack.Screen name="starred" options={{ title: 'Starred Messages' }} />
     </Stack>
   );
 }

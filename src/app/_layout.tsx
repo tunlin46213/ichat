@@ -6,10 +6,13 @@ import { Platform, useColorScheme } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { CallsProvider } from '@/calls/calls-provider';
+import { InAppBanner } from '@/components/in-app-banner';
 import { PhoneFrame } from '@/components/phone-frame';
 import { Accent, Colors } from '@/constants/theme';
+import { AppearanceProvider } from '@/context/appearance';
 import { AuthProvider, useAuth } from '@/context/auth';
 import { BlocksProvider } from '@/context/blocks';
+import { ChatsProvider } from '@/context/chats';
 import type { ChatNotificationData } from '@/lib/push';
 
 SplashScreen.preventAutoHideAsync();
@@ -93,19 +96,32 @@ function RootNavigator() {
   );
 }
 
+/** New-message banner, shown above every screen while signed in. */
+function SignedInOverlays() {
+  const { user, initializing } = useAuth();
+  if (initializing || !user) return null;
+  return <InAppBanner />;
+}
+
 export default function RootLayout() {
   const colorScheme = useColorScheme();
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
         <AuthProvider>
-          <BlocksProvider>
-            <CallsProvider>
-              <PhoneFrame>
-                <RootNavigator />
-              </PhoneFrame>
-            </CallsProvider>
-          </BlocksProvider>
+          <AppearanceProvider>
+            <BlocksProvider>
+              {/* Chats live here (not in the tabs) so the in-app banner works on every screen. */}
+              <ChatsProvider>
+                <CallsProvider>
+                  <PhoneFrame>
+                    <RootNavigator />
+                    <SignedInOverlays />
+                  </PhoneFrame>
+                </CallsProvider>
+              </ChatsProvider>
+            </BlocksProvider>
+          </AppearanceProvider>
         </AuthProvider>
       </ThemeProvider>
     </GestureHandlerRootView>

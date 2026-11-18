@@ -7,6 +7,7 @@ import {
   type Timestamp,
   updateDoc,
   writeBatch,
+  type WriteBatch,
 } from 'firebase/firestore';
 
 import { db } from '@/lib/firebase';
@@ -34,11 +35,15 @@ export type Chat = {
   unread?: Record<string, number>;
   /** Time each member last typed; "typing…" shows while this is recent. */
   typing?: Record<string, Timestamp | null>;
+  /** Message pinned to the top of the chat (shared by both members). */
+  pinned?: PinnedRef | null;
 };
+
+export type PinnedRef = { id: string; text: string; senderId: string };
 
 export type ReplyRef = { id: string; text: string; senderId: string };
 
-export type MessageType = 'text' | 'image' | 'audio';
+export type MessageType = 'text' | 'image' | 'audio' | 'call' | 'location';
 
 export type Message = {
   id: string;
@@ -51,6 +56,16 @@ export type Message = {
   width?: number;
   height?: number;
   durationMs?: number;
+  /** voice notes: loudness per bar (0–1), recorded while speaking */
+  waveform?: number[];
+  /** call log entries */
+  callType?: 'voice' | 'video';
+  callStatus?: 'answered' | 'missed';
+  /** shared location */
+  lat?: number;
+  lng?: number;
+  /** sent with "Forward" from another chat */
+  forwarded?: boolean;
   editedAt?: Timestamp | null;
   senderId: string;
   createdAt: Timestamp | null;
@@ -89,11 +104,35 @@ export async function ensureChat(
     chatRef(id),
     {
       members: [me.uid, other.uid].sort(),
-      names: { [me.uid]: me.name, [other.uid]: other.name },
+      // merge deep-merges this map. Skip a blank name (e.g. opened from a notification
+      // without one) so it never overwrites the other person's real name.
+      names: { [me.uid]: me.name, ...(other.name.trim() ? { [other.uid]: other.name } : {}) },
     },
     { merge: true }
   );
   return id;
+}
+
+/**
+ * Adds the chat-preview update that goes with every new message to `batch`: last
+ * message, time, and (unless told not to) one more unread for the recipient.
+ */
+export function addChatUpdate(
+  batch: WriteBatch,
+  chatId: string,
+  senderId: string,
+  recipientId: string,
+  preview: string,
+  { countUnread = true } = {}
+) {
+  batch.update(chatRef(chatId), {
+    lastMessage: preview,
+    lastSenderId: senderId,
+    updatedAt: serverTimestamp(),
+    ...(countUnread ? { [`unread.${recipientId}`]: increment(1) } : {}),
+    [`lastRead.${senderId}`]: serverTimestamp(),
+    [`typing.${senderId}`]: null,
+  });
 }
 
 /** Adds a message and updates the chat preview + the other person's unread count atomically. */
@@ -102,7 +141,8 @@ export async function sendMessage(
   senderId: string,
   recipientId: string,
   text: string,
-  replyTo?: ReplyRef | null
+  replyTo?: ReplyRef | null,
+  { forwarded = false } = {}
 ) {
   const batch = writeBatch(db);
   const ref = doc(collection(db, 'chats', chatId, 'messages'));
@@ -111,17 +151,96 @@ export async function sendMessage(
     senderId,
     createdAt: serverTimestamp(),
     ...(replyTo ? { replyTo: { ...replyTo, text: replyTo.text.slice(0, 200) } } : {}),
+    ...(forwarded ? { forwarded: true } : {}),
   });
-  batch.update(chatRef(chatId), {
-    lastMessage: text,
-    lastSenderId: senderId,
-    updatedAt: serverTimestamp(),
-    [`unread.${recipientId}`]: increment(1),
-    [`lastRead.${senderId}`]: serverTimestamp(),
-    [`typing.${senderId}`]: null,
-  });
+  addChatUpdate(batch, chatId, senderId, recipientId, text);
   await batch.commit();
   notifyRecipient(chatId, text);
+}
+
+/** Call log entry, written by the caller when a call ends. Missed calls count as unread. */
+export async function sendCallMessage(
+  chatId: string,
+  senderId: string,
+  recipientId: string,
+  call: { video: boolean; durationMs: number; answered: boolean }
+) {
+  const message = {
+    type: 'call' as const,
+    text: '',
+    senderId,
+    createdAt: serverTimestamp(),
+    callType: call.video ? ('video' as const) : ('voice' as const),
+    callStatus: call.answered ? ('answered' as const) : ('missed' as const),
+    durationMs: Math.max(0, Math.round(call.durationMs)),
+  };
+  const batch = writeBatch(db);
+  batch.set(doc(collection(db, 'chats', chatId, 'messages')), message);
+  const preview = previewFor(message);
+  addChatUpdate(batch, chatId, senderId, recipientId, preview, { countUnread: !call.answered });
+  await batch.commit();
+  if (!call.answered) notifyRecipient(chatId, preview);
+}
+
+/** Shares a map location (opens in Apple Maps on the other side). */
+export async function sendLocation(
+  chatId: string,
+  senderId: string,
+  recipientId: string,
+  coords: { lat: number; lng: number },
+  { forwarded = false } = {}
+) {
+  const batch = writeBatch(db);
+  batch.set(doc(collection(db, 'chats', chatId, 'messages')), {
+    type: 'location',
+    text: '',
+    senderId,
+    createdAt: serverTimestamp(),
+    lat: coords.lat,
+    lng: coords.lng,
+    ...(forwarded ? { forwarded: true } : {}),
+  });
+  addChatUpdate(batch, chatId, senderId, recipientId, '📍 Location');
+  await batch.commit();
+  notifyRecipient(chatId, '📍 Location');
+}
+
+/** Pins a message for both members, or clears the pin with null. */
+export function setPinned(chatId: string, pinned: PinnedRef | null) {
+  return updateDoc(chatRef(chatId), { pinned });
+}
+
+export function formatDuration(ms: number) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = String(s % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
+}
+
+/** One-line description of a message for previews, replies, pins and notifications. */
+export function previewFor(
+  message: Pick<Message, 'type' | 'text' | 'durationMs' | 'callType' | 'callStatus'>
+) {
+  switch (message.type ?? 'text') {
+    case 'image':
+      return '📷 Photo';
+    case 'audio':
+      return message.durationMs
+        ? `🎤 Voice message (${formatDuration(message.durationMs)})`
+        : '🎤 Voice message';
+    case 'location':
+      return '📍 Location';
+    case 'call': {
+      const icon = message.callType === 'video' ? '📹' : '📞';
+      const kind = message.callType === 'video' ? 'Video call' : 'Voice call';
+      return message.callStatus === 'missed'
+        ? `${icon} Missed ${kind.toLowerCase()}`
+        : `${icon} ${kind} · ${formatDuration(message.durationMs ?? 0)}`;
+    }
+    default:
+      return message.text;
+  }
 }
 
 /** Clears my unread count and moves my read marker to now. */
@@ -166,10 +285,21 @@ export function canEdit(message: Message, myUid: string) {
 }
 
 /** Edits my message's text and marks it "Edited". Updates the chat preview if it's the latest. */
-export async function editMessage(chatId: string, messageId: string, text: string, isLatest: boolean) {
+export async function editMessage(
+  chatId: string,
+  messageId: string,
+  text: string,
+  { isLatest = false, isPinned = false } = {}
+) {
   const batch = writeBatch(db);
   batch.update(messageRef(chatId, messageId), { text, editedAt: serverTimestamp() });
-  if (isLatest) batch.update(chatRef(chatId), { lastMessage: text });
+  if (isLatest || isPinned) {
+    batch.update(chatRef(chatId), {
+      ...(isLatest ? { lastMessage: text } : {}),
+      // Keep the pinned bar in step with the edited text.
+      ...(isPinned ? { 'pinned.text': text.slice(0, 200) } : {}),
+    });
+  }
   await batch.commit();
 }
 
@@ -177,10 +307,20 @@ export async function editMessage(chatId: string, messageId: string, text: strin
  * "Unsend": clears the text for both people and leaves a placeholder. If it was the
  * latest message, the chat-list preview is updated too so the text doesn't linger.
  */
-export async function unsendMessage(chatId: string, messageId: string, isLatest: boolean) {
+export async function unsendMessage(
+  chatId: string,
+  messageId: string,
+  { isLatest = false, isPinned = false } = {}
+) {
   const batch = writeBatch(db);
   batch.update(messageRef(chatId, messageId), { deleted: true, text: '', replyTo: null });
-  if (isLatest) batch.update(chatRef(chatId), { lastMessage: 'Message unsent' });
+  if (isLatest || isPinned) {
+    batch.update(chatRef(chatId), {
+      ...(isLatest ? { lastMessage: 'Message unsent' } : {}),
+      // An unsent message must not live on in the pinned bar.
+      ...(isPinned ? { pinned: null } : {}),
+    });
+  }
   await batch.commit();
 }
 

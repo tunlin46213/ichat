@@ -6,20 +6,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CountBadge } from '@/components/badge';
 import { Icon, type IconName } from '@/components/icon';
 import { Accent } from '@/constants/theme';
-import { ChatsProvider, useChats } from '@/context/chats';
+import { useChats } from '@/context/chats';
 import { useTheme } from '@/hooks/use-theme';
 
 // Native tabs have no iOS-style tab bar on web, so build one with headless tabs.
 // Tab folders with an index route are served at "/chats" and "/settings".
+// ChatsProvider is in the root layout (it also feeds the in-app banner).
 export default function TabsLayout() {
-  return (
-    <ChatsProvider>
-      <WebTabs />
-    </ChatsProvider>
-  );
-}
-
-function WebTabs() {
   const theme = useTheme();
   const { totalUnread } = useChats();
   const { bottom } = useSafeAreaInsets();

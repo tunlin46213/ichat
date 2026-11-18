@@ -5,13 +5,13 @@ import {
   collection,
   doc,
   getDoc,
-  increment,
   serverTimestamp,
   updateDoc,
   writeBatch,
 } from 'firebase/firestore';
 import { Platform } from 'react-native';
 
+import { addChatUpdate, previewFor } from '@/lib/chat';
 import { db } from '@/lib/firebase';
 import { notifyRecipient } from '@/lib/notify';
 
@@ -54,25 +54,46 @@ async function compress(uri: string, width: number, height: number, maxSide: num
   throw mediaError('media/too-large');
 }
 
-/** Opens the photo library or camera and returns a compressed JPEG (base64). */
-export async function pickImage(
-  source: 'library' | 'camera',
-  maxSide = 1280
-): Promise<PickedImage | null> {
+export const MAX_PHOTOS = 10;
+
+async function launchPicker(source: 'library' | 'camera', multiple: boolean) {
   const permission =
     source === 'camera'
       ? await ImagePicker.requestCameraPermissionsAsync()
       : await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (!permission.granted) throw mediaError('media/permission');
 
-  const options: ImagePicker.ImagePickerOptions = { mediaTypes: ['images'], quality: 1 };
+  const options: ImagePicker.ImagePickerOptions = {
+    mediaTypes: ['images'],
+    quality: 1,
+    ...(multiple && source === 'library'
+      ? { allowsMultipleSelection: true, selectionLimit: MAX_PHOTOS, orderedSelection: true }
+      : {}),
+  };
   const result =
     source === 'camera'
       ? await ImagePicker.launchCameraAsync(options)
       : await ImagePicker.launchImageLibraryAsync(options);
-  if (result.canceled || !result.assets[0]) return null;
-  const asset = result.assets[0];
+  return result.canceled ? [] : result.assets;
+}
+
+/** Opens the photo library or camera and returns a compressed JPEG (base64). */
+export async function pickImage(
+  source: 'library' | 'camera',
+  maxSide = 1280
+): Promise<PickedImage | null> {
+  const asset = (await launchPicker(source, false))[0];
+  if (!asset) return null;
   return compress(asset.uri, asset.width, asset.height, maxSide);
+}
+
+/**
+ * Lets the user pick up to MAX_PHOTOS photos (one from the camera). Returns a function
+ * per photo that compresses it on demand, so a big album doesn't sit in memory at once.
+ */
+export async function pickImages(source: 'library' | 'camera', maxSide = 1280) {
+  const assets = await launchPicker(source, true);
+  return assets.map((a) => () => compress(a.uri, a.width, a.height, maxSide));
 }
 
 /** Reads a recorded file (file:// on iOS, blob: on web) as base64. */
@@ -87,8 +108,6 @@ async function readBase64(uri: string) {
   });
 }
 
-const PREVIEW = { image: '📷 Photo', audio: '🎤 Voice message' } as const;
-
 /** Stores the file in chats/{chatId}/media and posts the message, in one atomic write. */
 export async function sendMediaMessage(
   chatId: string,
@@ -96,12 +115,23 @@ export async function sendMediaMessage(
   recipientId: string,
   media:
     | { type: 'image'; base64: string; width: number; height: number }
-    | { type: 'audio'; uri: string; durationMs: number }
+    | {
+        type: 'audio';
+        /** a recording to read, or base64 already in hand (forwarding) */
+        uri?: string;
+        base64?: string;
+        mime?: string;
+        durationMs: number;
+        waveform?: number[];
+      },
+  { forwarded = false } = {}
 ) {
   const isAudio = media.type === 'audio';
-  const base64 = isAudio ? await readBase64(media.uri) : media.base64;
+  const base64 = isAudio ? (media.base64 ?? (await readBase64(media.uri ?? ''))) : media.base64;
   if (base64.length > MAX_BASE64) throw mediaError('media/too-large');
-  const mime = isAudio ? (Platform.OS === 'web' ? 'audio/webm' : 'audio/mp4') : 'image/jpeg';
+  const mime = isAudio
+    ? (media.mime ?? (Platform.OS === 'web' ? 'audio/webm' : 'audio/mp4'))
+    : 'image/jpeg';
 
   const mediaRef = doc(collection(db, 'chats', chatId, 'media'));
   const messageRef = doc(collection(db, 'chats', chatId, 'messages'));
@@ -115,19 +145,29 @@ export async function sendMediaMessage(
     senderId,
     createdAt: serverTimestamp(),
     ...(isAudio
-      ? { durationMs: Math.round(media.durationMs) }
+      ? {
+          durationMs: Math.round(media.durationMs),
+          ...(media.waveform?.length ? { waveform: media.waveform } : {}),
+        }
       : { width: media.width, height: media.height }),
+    ...(forwarded ? { forwarded: true } : {}),
   });
-  batch.update(doc(db, 'chats', chatId), {
-    lastMessage: PREVIEW[media.type],
-    lastSenderId: senderId,
-    updatedAt: serverTimestamp(),
-    [`unread.${recipientId}`]: increment(1),
-    [`lastRead.${senderId}`]: serverTimestamp(),
-    [`typing.${senderId}`]: null,
+  const preview = previewFor({
+    type: media.type,
+    text: '',
+    durationMs: isAudio ? media.durationMs : undefined,
   });
+  addChatUpdate(batch, chatId, senderId, recipientId, preview);
   await batch.commit();
-  notifyRecipient(chatId, PREVIEW[media.type]);
+  notifyRecipient(chatId, preview);
+}
+
+/** The raw base64 of a stored photo / voice note (for forwarding). */
+export async function readMediaBase64(chatId: string, mediaId: string) {
+  const snap = await getDoc(doc(db, 'chats', chatId, 'media', mediaId));
+  const data = snap.get('data') as string | undefined;
+  if (!data) throw mediaError('media/missing');
+  return data;
 }
 
 // Loaded media, by chat/media id → playable/displayable URI. Files never change.

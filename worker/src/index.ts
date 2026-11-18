@@ -166,6 +166,9 @@ const strings = (v?: FsValue) => v?.arrayValue?.values?.map((x) => x.stringValue
 // ─── /notify ───────────────────────────────────────────────────────────────
 
 async function notify(env: Env, senderId: string, chatId: string, body: string) {
+  // Without the service account we can't read Firestore or send pushes. Say so plainly
+  // instead of crashing in accessToken() with a 500 on every message.
+  if (!env.FIREBASE_SERVICE_ACCOUNT) return json({ sent: 0, reason: 'push not configured' });
   const chat = await getDoc(env, `chats/${chatId}`);
   const members = strings(chat?.fields?.members);
   if (!members.includes(senderId)) return json({ error: 'not a member' }, 403);

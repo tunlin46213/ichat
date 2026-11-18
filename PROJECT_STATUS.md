@@ -111,7 +111,7 @@ src/app/
   index.tsx                 redirect → /chats or /login
   (tabs)/_layout.tsx        NativeTabs + unread badge     (_layout.web.tsx = web tab bar)
   (tabs)/chats/index.tsx    chat list (swipe delete, unread, typing, online dot)
-  (tabs)/settings/          settings (name, photo, notifications[web], blocked, terms, logout, delete acct)
+  (tabs)/settings/          settings (profile hero, appearance, starred, notifications[web], blocked, terms, logout, delete acct)
   chat/[id].tsx             chat screen (messages, menu, reply/edit, media, calls, read receipts)
   users.tsx                 new chat picker (modal)
   user/[id].tsx             contact sheet: block / report
@@ -136,9 +136,11 @@ users/{uid}/private/push    tokens[] (Expo), fcmTokens[] (web)
 blocks/{uid}                blocked[]                      (owner only)
 reports/{id}                reporterId, reportedUserId, reason, chatId, messageId, messageText (create only)
 chats/{uidA_uidB}           members[2] sorted, names{}, lastMessage, lastSenderId, updatedAt,
-                            unread{uid:n}, lastRead{uid:ts}, typing{uid:ts}, hiddenAt{uid:ts}
-chats/{id}/messages/{id}    type text|image|audio, text, senderId, createdAt, replyTo, reactions{uid:emoji},
-                            editedAt, deleted, mediaId, mime, width, height, durationMs
+                            unread{uid:n}, lastRead{uid:ts}, typing{uid:ts}, hiddenAt{uid:ts}, pinned{id,text,senderId}
+chats/{id}/messages/{id}    type text|image|audio|call|location, text, senderId, createdAt, replyTo, reactions{uid:emoji},
+                            editedAt, deleted, mediaId, mime, width, height, durationMs, waveform[],
+                            callType voice|video, callStatus answered|missed, lat, lng, forwarded
+users/{uid}/private/starred items{chatId__messageId: {chatId, messageId, otherId, otherName, senderId, preview, starredAt}}
 chats/{id}/media/{id}       data (base64 ≤ ~900KB), mime, senderId, createdAt
 ```
 Rules အဓိကချက်: chat members ပဲ ဖတ်/ရေး; block ထားရင် message create ပိတ်; reaction က ကိုယ့် key ပဲ; edit ၁၅ မိနစ်အတွင်း; unsend sender ပဲ; media က `existsAfter` (same batch)။
@@ -151,13 +153,25 @@ Rules အဓိကချက်: chat members ပဲ ဖတ်/ရေး; block �
 - Moderation: block/unblock, report (user/message), blocked list (App Store 1.2)
 - UI: iOS native style (large titles, SF Symbols, haptics, animations, skeletons, swipe delete), web iPhone frame
 - Calls: voice 📞 + video 🎥 via Stream (native build only)
-- Infra: Worker deployed + Stream secret; GitHub Actions sideload build (**build #1 `dc1d148` ✅ 18 min**, call မပါ)
+- Infra: Worker deployed + Stream secret; GitHub Actions sideload build (**build #1 `dc1d148` ✅ 18 min**, call မပါ; **build #2 `ae27003` ✅ 15 min, `iChat.ipa` 23.8 MB**, voice+video call ပါ)
 
 ## 10. ကျန်သေးတာ / Next steps ⏳
 
-- [ ] **Build #2 (`ae27003`, voice+video call ပါ)** — run နေတုန်း ရလဒ် စစ်ရန်
+- [x] **Build #2 (`ae27003`, voice+video call ပါ)** — ✅ Success (14m 58s, artifact `iChat-ipa` 23.8 MB)
 - [ ] **Firestore rules ကို console မှာ Publish** (user လုပ်ရ — လုပ်ပြီးမပြီး အတည်မပြုရသေး)
-- [ ] Sideloadly နဲ့ iPhone ၂ လုံးမှာ install → chat / photo / voice / **call** ကို တကယ်စမ်း (Stream + SDK 58 မစမ်းရသေး)
+- [x] iPhone မှာ install ပြီး (Arch Linux → **Impactor** Flatpak; ဖုန်းအရင်ချိတ်ပြီးမှ Impactor ဖွင့်) — chat / voice message ✅
+- [ ] **Call failed** (build #2) — အဓိကအကြောင်းရင်း: `getOrCreateInstance` race (profile load → effect re-run → disconnect ဖြစ်နေတဲ့ client ကို ပြန်ရ). Fix: deps `[uid, name]`, ယခင် disconnect ပြီးမှ client အသစ်; Stream `image` မပို့တော့; alert ထဲ error ပြ → build #3 နဲ့ ပြန်စမ်းရန်
+- [x] Chat screen: iOS 26 transparent header ကြောင့် message တွေ header နောက်ထိရောက် + keyboard ကွက်လပ် → `headerTransparent: false` (build #3 မှာ အတည်ပြုရန်)
+- [x] Bug sweep (build #3 မှာ အတည်ပြုရန်): voice message silent mode မှာ အသံမထွက် → play မတိုင်ခင် `playsInSilentMode`; Stream client ချိတ်တိုင်း app tree remount (navigation reset) → `<StreamVideo>` ကို call UI ပဲ wrap; `ensureChat` က တစ်ဖက်လူနာမည်ကို ဗလာ/`User` နဲ့ overwrite မလုပ်တော့
+- [ ] Worker `/notify`: service account မရှိရင် 500 အစား `{sent:0}` — **`npx wrangler deploy` လုပ်ရန်**
+- [x] **Upgrade (2026-11-18, build #3 မှာ အတည်ပြုရန်):** in-app message banner + chime (push မရလို့); swipe-to-reply + double-tap ❤️; call history message (`type: 'call'`, caller က call ပြီးရင် ရေး); real voice waveform + 1x/1.5x/2x; chat list contacts row + ✓✓ read tick; Appearance (bubble color + wallpaper, AsyncStorage); link preview (native only); Settings profile hero; chat ထဲ search; pin message; forward; star (`users/{uid}/private/starred`); ပုံ ၁၀ ပုံအထိ တစ်ခါတည်း; location (`expo-location`, `type: 'location'`)
+- [x] Upgrade bug sweep: unsend/edit လုပ်ရင် pinned bar လိုက်ပြင်; search လုပ်နေတုန်း composer ဖျောက်; modal ပိတ်ပြီးမှ picker/alert/screen ဖွင့် (`afterModalClose`, iOS 350ms); account ပြောင်းရင် chat list အဟောင်း မပေါ် (uid-tagged state); ပုံတစ်ပုံ fail ရင် ကျန်တာ ဆက်ပို့; waveform sample ထပ်မနေ; voice ရပ်ရင် silent mode ပြန်လေးစား (chime)
+- [x] Premium UI pass: chat list story-ring contacts row (online = gradient ring, unread badge), icon read ticks, MESSAGES section; Settings hero (gradient cover, avatar ring, camera button ကနေပဲ photo ပြောင်း — "Change Photo" row ဖြုတ်)
+- [x] Chat list premium v2: header ဘယ်ဘက်မှာ ကိုယ့် avatar (→ Settings); All/Unread/Online filter chips; preview မှာ emoji အစား icon (missed call အနီ); online ring pulse animation (reduce motion လေးစား); profiles ကို `useUserProfiles` နဲ့ တစ်ခါတည်း ယူ
+- [x] Chat screen premium (build #3 မှာ အတည်ပြုရန်): hold-to-record mic (ဖိ=record, လွှတ်=ပို့, ဘယ်ဆွဲ=cancel); photo viewer (pinch/double-tap zoom, အောက်ဆွဲပိတ်, ဘေးတိုက်လှန်, Save to Photos — `expo-media-library` အသစ်); Liquid Glass composer + gradient send + emoji panel; double-tap ❤️ burst + reaction pill pop + who-reacted sheet; Messenger-style seen avatar
+- ⚠️ Gesture hook config (`usePanGesture({...})` စသည်) ထဲမှာ object spread မသုံးရ — worklets Babel plugin က bundle ကို fail စေတယ် (`npx expo export` မှ ဖမ်းမိ)
+- [x] Double-check (chat screen premium): ၆၀s limit ပြည့်ပို့ပြီးမှ hint အမှားမပေါ်; photo viewer counter/Save က web မှာ page မှန် (onScroll); double-tap ❤️ ကို text message ပဲ (call bubble မှာ call မစ); chat preview icon ကို app ထုတ်တဲ့ preview အတိအကျပဲ ကိုက်
+- [ ] **Firestore rules ကို ပြန် Publish ရန်** — `call` / `location` message type အသစ် (မ publish ရင် call history နဲ့ location ပို့တာ permission-denied)
 - [ ] Stream secret **rotate** (dashboard regenerate → `wrangler secret put STREAM_API_SECRET`)
 - [ ] (optional) Web push: VAPID key → `webPushVapidKey`; `FIREBASE_SERVICE_ACCOUNT` secret; `npm run deploy:web`
 - [ ] Workflow ထဲ actions v4 → Node 24 compatible version update (Node 20 deprecation warning)

@@ -2,9 +2,10 @@ import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, ZoomIn } from 'react-native-reanimated';
 
 import { Icon, type IconName } from '@/components/icon';
-import { Accent, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
+import { useAppearance } from '@/context/appearance';
 import { useTheme } from '@/hooks/use-theme';
-import { formatSeparator, REACTIONS, type Message } from '@/lib/chat';
+import { formatSeparator, previewFor, REACTIONS, type Message } from '@/lib/chat';
 
 type Action = { label: string; icon: IconName; destructive?: boolean; onPress: () => void };
 
@@ -23,6 +24,11 @@ export function MessageMenu({
   onUnsend,
   onEdit,
   onReport,
+  pinned,
+  onPin,
+  starred,
+  onStar,
+  onForward,
 }: {
   message: Message | null;
   mine: boolean;
@@ -36,13 +42,26 @@ export function MessageMenu({
   onEdit?: () => void;
   /** shown for the other person's messages */
   onReport?: () => void;
+  /** this message is the chat's pinned one */
+  pinned: boolean;
+  onPin: () => void;
+  starred: boolean;
+  onStar: () => void;
+  /** missing for messages that can't be forwarded (call log) */
+  onForward?: () => void;
 }) {
   const theme = useTheme();
+  const { bubbleColor } = useAppearance();
   if (!message) return null;
 
   const type = message.type ?? 'text';
   const actions: Action[] = [{ label: 'Reply', icon: 'arrowshape.turn.up.left', onPress: onReply }];
+  if (onForward) {
+    actions.push({ label: 'Forward', icon: 'arrowshape.turn.up.right', onPress: onForward });
+  }
   if (type === 'text') actions.push({ label: 'Copy', icon: 'doc.on.doc', onPress: onCopy });
+  actions.push({ label: pinned ? 'Unpin' : 'Pin', icon: pinned ? 'pin.slash' : 'pin', onPress: onPin });
+  actions.push({ label: starred ? 'Unstar' : 'Star', icon: starred ? 'star.slash' : 'star', onPress: onStar });
   if (onEdit) actions.push({ label: 'Edit', icon: 'pencil', onPress: onEdit });
   if (onReport) {
     actions.push({
@@ -87,7 +106,7 @@ export function MessageMenu({
                   accessibilityState={{ selected }}
                   style={({ pressed }) => [
                     styles.reaction,
-                    selected && { backgroundColor: Accent },
+                    selected && { backgroundColor: bubbleColor },
                     pressed && { transform: [{ scale: 1.25 }] },
                   ]}>
                   <Text style={styles.reactionText}>{emoji}</Text>
@@ -99,10 +118,10 @@ export function MessageMenu({
           <View
             style={[
               styles.preview,
-              { backgroundColor: mine ? Accent : theme.bubbleIncoming },
+              { backgroundColor: mine ? bubbleColor : theme.bubbleIncoming },
             ]}>
             <Text style={[styles.previewText, { color: mine ? '#fff' : theme.text }]} numberOfLines={8}>
-              {type === 'image' ? '📷 Photo' : type === 'audio' ? '🎤 Voice message' : message.text}
+              {previewFor(message)}
             </Text>
           </View>
           <Text style={styles.timestamp}>{formatSeparator(message.createdAt)}</Text>

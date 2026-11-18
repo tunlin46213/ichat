@@ -11,6 +11,9 @@ let activeChatId: string | null = null;
 export function setActiveChat(chatId: string | null) {
   activeChatId = chatId;
 }
+export function getActiveChat() {
+  return activeChatId;
+}
 
 // Foreground behaviour: show banners, except for the chat the user is looking at.
 if (Platform.OS !== 'web') {

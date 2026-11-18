@@ -12,8 +12,13 @@ const SW_PATH = '/firebase-messaging-sw.js';
 const tokensDoc = (uid: string) => doc(db, 'users', uid, 'private', 'push');
 let registeredToken: string | null = null;
 
-export function setActiveChat(_chatId: string | null) {
-  // The service worker shows every web push (iOS requires it), so nothing to track.
+// Push banners come from the service worker; this only drives the in-app banner.
+let activeChatId: string | null = null;
+export function setActiveChat(chatId: string | null) {
+  activeChatId = chatId;
+}
+export function getActiveChat() {
+  return activeChatId;
 }
 
 function isIos() {

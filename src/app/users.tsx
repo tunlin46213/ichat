@@ -1,7 +1,16 @@
-import { router, Stack } from 'expo-router';
-import { collection, onSnapshot, orderBy, query } from 'firebase/firestore';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
+import { collection, doc, getDoc, onSnapshot, orderBy, query } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
-import { FlatList, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
 import { Avatar } from '@/components/avatar';
 import { HeaderAction } from '@/components/header-action';
@@ -12,11 +21,23 @@ import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useBlocks } from '@/context/blocks';
 import { useTheme } from '@/hooks/use-theme';
-import { chatIdFor, type UserProfile } from '@/lib/chat';
+import { chatIdFor, type Message, type UserProfile } from '@/lib/chat';
 import { db } from '@/lib/firebase';
+import { forwardMessage } from '@/lib/forward';
+import { haptics } from '@/lib/haptics';
 
+/**
+ * New-chat picker. With `forwardChatId` + `forwardMessageId` it becomes "Forward to…":
+ * picking a person sends them a copy of that message and opens the chat.
+ */
 export default function UsersScreen() {
-  const { user } = useAuth();
+  const { forwardChatId, forwardMessageId } = useLocalSearchParams<{
+    forwardChatId?: string;
+    forwardMessageId?: string;
+  }>();
+  const forwarding = !!forwardChatId && !!forwardMessageId;
+  const [sendingTo, setSendingTo] = useState<string | null>(null);
+  const { user, displayName } = useAuth();
   const theme = useTheme();
   const [users, setUsers] = useState<UserProfile[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -40,12 +61,40 @@ export default function UsersScreen() {
     );
   }, [myUid]);
 
+  async function forwardTo(person: UserProfile) {
+    if (sendingTo) return;
+    setSendingTo(person.id);
+    try {
+      const snap = await getDoc(doc(db, 'chats', forwardChatId!, 'messages', forwardMessageId!));
+      if (!snap.exists()) throw new Error('missing');
+      const message = { id: snap.id, ...snap.data() } as Message;
+      const chatId = await forwardMessage(
+        forwardChatId!,
+        message,
+        { uid: myUid, name: displayName ?? 'User' },
+        { uid: person.id, name: person.name }
+      );
+      haptics.success();
+      router.replace({
+        pathname: '/chat/[id]',
+        params: { id: chatId, otherId: person.id, name: person.name },
+      });
+    } catch {
+      haptics.error();
+      setSendingTo(null);
+      const text = `Could not forward to ${person.name}. Try again.`;
+      if (Platform.OS === 'web') window.alert(text);
+      else Alert.alert('Not forwarded', text);
+    }
+  }
+
   const term = search.trim().toLowerCase();
   const shown =
     users?.filter((u) => !blocked.includes(u.id) && u.name.toLowerCase().includes(term)) ?? null;
 
   return (
     <>
+      <Stack.Screen options={{ title: forwarding ? 'Forward to…' : 'New Chat' }} />
       <HeaderAction placement="left" label="Cancel" onPress={() => router.back()} />
       <Stack.SearchBar
         placeholder="Search people"
@@ -86,12 +135,15 @@ export default function UsersScreen() {
         }
         renderItem={({ item }) => (
           <Pressable
+            disabled={!!sendingTo}
             onPress={() =>
-              // Replace the sheet with the chat, so "back" from the chat returns to the list.
-              router.replace({
-                pathname: '/chat/[id]',
-                params: { id: chatIdFor(myUid, item.id), otherId: item.id, name: item.name },
-              })
+              forwarding
+                ? forwardTo(item)
+                : // Replace the sheet with the chat, so "back" from the chat returns to the list.
+                  router.replace({
+                    pathname: '/chat/[id]',
+                    params: { id: chatIdFor(myUid, item.id), otherId: item.id, name: item.name },
+                  })
             }
             style={({ pressed }) => [
               styles.row,
@@ -102,6 +154,7 @@ export default function UsersScreen() {
               <Text style={[styles.name, { color: theme.text }]} numberOfLines={1}>
                 {item.name}
               </Text>
+              {sendingTo === item.id ? <ActivityIndicator style={styles.spinner} /> : null}
             </View>
           </Pressable>
         )}
@@ -123,8 +176,10 @@ const styles = StyleSheet.create({
   rowBody: {
     flex: 1,
     minHeight: 56,
-    justifyContent: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  name: { fontSize: 17 },
+  name: { flex: 1, fontSize: 17 },
+  spinner: { marginRight: Spacing.three },
 });

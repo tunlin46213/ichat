@@ -13,10 +13,13 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
+  useColorScheme,
   View,
 } from 'react-native';
 import Animated, { FadeIn, ZoomIn, ZoomOut } from 'react-native-reanimated';
 
+import { ActionSheet, afterModalClose } from '@/components/action-sheet';
 import { Avatar } from '@/components/avatar';
 import { useCalls } from '@/calls/context';
 import { OfflineBanner } from '@/components/banners';
@@ -24,12 +27,15 @@ import { ChatHeaderTitle } from '@/components/chat/chat-header-title';
 import { Composer } from '@/components/chat/composer';
 import { MessageBubble } from '@/components/chat/message-bubble';
 import { MessageMenu } from '@/components/chat/message-menu';
+import { PhotoViewer } from '@/components/chat/photo-viewer';
+import { ReactionsSheet } from '@/components/chat/reactions-sheet';
 import { TypingBubble } from '@/components/chat/typing-bubble';
 import { HeaderActions } from '@/components/header-action';
 import { Icon } from '@/components/icon';
 import { ListMessage } from '@/components/list-states';
 import { WebBackButton } from '@/components/web-header';
 import { Spacing } from '@/constants/theme';
+import { useAppearance, wallpaperGradient } from '@/context/appearance';
 import { useAuth } from '@/context/auth';
 import { useBlocks } from '@/context/blocks';
 import { useNow } from '@/hooks/use-now';
@@ -47,7 +53,10 @@ import {
   isTyping,
   markRead,
   needsSeparator,
+  previewFor,
+  sendLocation,
   sendMessage,
+  setPinned,
   setTyping,
   toggleReaction,
   unsendMessage,
@@ -56,10 +65,13 @@ import {
   type ReplyRef,
 } from '@/lib/chat';
 import { db } from '@/lib/firebase';
+import { canForward } from '@/lib/forward';
 import { haptics } from '@/lib/haptics';
-import { mediaErrorMessage, pickImage, sendMediaMessage } from '@/lib/media';
+import { getCurrentCoords, locationErrorMessage } from '@/lib/location';
+import { mediaErrorMessage, pickImages, sendMediaMessage } from '@/lib/media';
 import { setActiveChat } from '@/lib/push';
 import { callsUnavailableReason } from '@/lib/runtime';
+import { isStarred, starMessage, unstarMessage, useStarred } from '@/lib/starred';
 
 function showAlert(title: string, message: string) {
   if (Platform.OS === 'web') window.alert(`${title}\n\n${message}`);
@@ -79,6 +91,9 @@ export default function ChatScreen() {
   const { id, otherId, name } = useLocalSearchParams<{ id: string; otherId: string; name: string }>();
   const { user, displayName } = useAuth();
   const theme = useTheme();
+  const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
+  const { wallpaper, bubbleColor } = useAppearance();
+  const background = wallpaperGradient(wallpaper, scheme);
   const headerHeight = useHeaderHeight();
   const listRef = useRef<FlatList<Message>>(null);
   // Re-render every few seconds so "typing…" and presence labels stay current.
@@ -101,6 +116,14 @@ export default function ChatScreen() {
   const [editing, setEditing] = useState<Message | null>(null);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [showJump, setShowJump] = useState(false);
+  const [attachOpen, setAttachOpen] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [searchText, setSearchText] = useState('');
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [viewerStart, setViewerStart] = useState<number | null>(null);
+  const [reactionsFor, setReactionsFor] = useState<Message | null>(null);
+  const me = useUserProfile(myUid);
+  const starred = useStarred(myUid);
   // Messages newer than this animate in; the initial history appears without animation.
   const [openedAt] = useState(() => Date.now());
 
@@ -113,7 +136,7 @@ export default function ChatScreen() {
     let cancelled = false;
     ensureChat(
       { uid: myUid, name: displayName ?? user?.email ?? 'User' },
-      { uid: otherId, name: name ?? 'User' }
+      { uid: otherId, name: name ?? '' }
     )
       .then(() => !cancelled && setReady(true))
       .catch((err) => !cancelled && setError(`Could not open chat (${err.code}).`));
@@ -194,7 +217,10 @@ export default function ChatScreen() {
       setEditing(null);
       if (text === target.text) return true;
       try {
-        await editMessage(id, target.id, text, visible?.[0]?.id === target.id);
+        await editMessage(id, target.id, text, {
+          isLatest: visible?.[0]?.id === target.id,
+          isPinned: chat?.pinned?.id === target.id,
+        });
       } catch {
         haptics.error();
         setError('Could not edit the message.');
@@ -228,21 +254,32 @@ export default function ChatScreen() {
     try {
       haptics.medium();
       await startCall({ id: otherId, name: otherName }, { video });
-    } catch {
+    } catch (err) {
       haptics.error();
-      showAlert('Call failed', 'Could not start the call. Check your connection and try again.');
+      console.warn('Call failed', err);
+      const detail = err instanceof Error && err.message ? `\n\n(${err.message.slice(0, 200)})` : '';
+      showAlert('Call failed', `Could not start the call. Check your connection and try again.${detail}`);
     }
   }
 
-  // ── Photos and voice messages ──
-  async function sendImage(source: 'library' | 'camera') {
+  // ── Photos, location and voice messages ──
+  async function sendImages(source: 'library' | 'camera') {
     try {
-      const image = await pickImage(source);
-      if (!image) return;
-      setBusyLabel('Sending photo…');
-      await sendMediaMessage(id, myUid, otherId, { type: 'image', ...image });
-      haptics.light();
-      listRef.current?.scrollToOffset({ offset: 0, animated: true });
+      const photos = await pickImages(source);
+      let failed: unknown = null;
+      for (let i = 0; i < photos.length; i++) {
+        setBusyLabel(photos.length > 1 ? `Sending photo ${i + 1} of ${photos.length}…` : 'Sending photo…');
+        try {
+          const image = await photos[i]();
+          await sendMediaMessage(id, myUid, otherId, { type: 'image', ...image });
+          haptics.light();
+        } catch (err) {
+          // Keep going with the rest; report once at the end.
+          failed = err;
+        }
+      }
+      if (photos.length) listRef.current?.scrollToOffset({ offset: 0, animated: true });
+      if (failed) throw failed;
     } catch (err) {
       haptics.error();
       showAlert('Photo not sent', mediaErrorMessage(err));
@@ -250,18 +287,25 @@ export default function ChatScreen() {
       setBusyLabel(null);
     }
   }
-  function attach() {
-    if (Platform.OS === 'web') return sendImage('library');
-    Alert.alert('Send a photo', undefined, [
-      { text: 'Take Photo', onPress: () => sendImage('camera') },
-      { text: 'Choose from Library', onPress: () => sendImage('library') },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+  async function shareLocation() {
+    try {
+      setBusyLabel('Getting your location…');
+      const coords = await getCurrentCoords();
+      setBusyLabel('Sending location…');
+      await sendLocation(id, myUid, otherId, coords);
+      haptics.light();
+      listRef.current?.scrollToOffset({ offset: 0, animated: true });
+    } catch (err) {
+      haptics.error();
+      showAlert('Location not sent', locationErrorMessage(err));
+    } finally {
+      setBusyLabel(null);
+    }
   }
-  async function sendVoice(uri: string, durationMs: number) {
+  async function sendVoice(uri: string, durationMs: number, waveform: number[]) {
     try {
       setBusyLabel('Sending voice message…');
-      await sendMediaMessage(id, myUid, otherId, { type: 'audio', uri, durationMs });
+      await sendMediaMessage(id, myUid, otherId, { type: 'audio', uri, durationMs, waveform });
       haptics.light();
     } catch (err) {
       haptics.error();
@@ -269,6 +313,27 @@ export default function ChatScreen() {
     } finally {
       setBusyLabel(null);
     }
+  }
+
+  // ── Search, pinned message, jumping to a message ──
+  function jumpTo(messageId: string) {
+    const index = visible?.findIndex((m) => m.id === messageId) ?? -1;
+    if (index < 0) {
+      showAlert('Message not loaded', 'Scroll up to load older messages, then try again.');
+      return;
+    }
+    setSearching(false);
+    setSearchText('');
+    // Let the message list mount again (search replaces it) before scrolling.
+    setTimeout(() => {
+      listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
+      setHighlightId(messageId);
+      setTimeout(() => setHighlightId((h) => (h === messageId ? null : h)), 1800);
+    }, 50);
+  }
+  function closeSearch() {
+    setSearching(false);
+    setSearchText('');
   }
 
   // ── Long-press menu actions ──
@@ -283,13 +348,52 @@ export default function ChatScreen() {
     toggleReaction(id, menuFor, myUid, emoji).catch(() => haptics.error());
     setMenuFor(null);
   }
+  function startReply(message: Message) {
+    setEditing(null);
+    setReplyTo({ id: message.id, text: previewFor(message), senderId: message.senderId });
+  }
   function reply() {
     if (!menuFor) return;
-    const preview =
-      menuFor.type === 'image' ? '📷 Photo' : menuFor.type === 'audio' ? '🎤 Voice message' : menuFor.text;
-    setEditing(null);
-    setReplyTo({ id: menuFor.id, text: preview, senderId: menuFor.senderId });
+    startReply(menuFor);
     setMenuFor(null);
+  }
+  /** Double tap: ❤️, or remove it if it is already my reaction. */
+  function like(message: Message) {
+    haptics.light();
+    toggleReaction(id, message, myUid, '❤️').catch(() => haptics.error());
+  }
+  function pin() {
+    const target = menuFor;
+    if (!target) return;
+    setMenuFor(null);
+    const unpin = chat?.pinned?.id === target.id;
+    setPinned(
+      id,
+      unpin ? null : { id: target.id, text: previewFor(target).slice(0, 200), senderId: target.senderId }
+    ).then(
+      () => haptics.success(),
+      () => haptics.error()
+    );
+  }
+  function star() {
+    const target = menuFor;
+    if (!target) return;
+    setMenuFor(null);
+    const op = isStarred(starred, id, target.id)
+      ? unstarMessage(myUid, id, target.id)
+      : starMessage(myUid, id, target, { id: otherId, name: otherName });
+    op.then(
+      () => haptics.success(),
+      () => haptics.error()
+    );
+  }
+  function forward() {
+    const target = menuFor;
+    if (!target) return;
+    setMenuFor(null);
+    afterModalClose(() =>
+      router.push({ pathname: '/users', params: { forwardChatId: id, forwardMessageId: target.id } })
+    );
   }
   function edit() {
     if (!menuFor) return;
@@ -301,17 +405,19 @@ export default function ChatScreen() {
     const target = menuFor;
     if (!target) return;
     setMenuFor(null);
-    router.push({
-      pathname: '/user/[id]',
-      params: {
-        id: otherId,
-        name: otherName,
-        report: '1',
-        chatId: id,
-        messageId: target.id,
-        messageText: target.text || (target.type === 'image' ? '[photo]' : '[voice message]'),
-      },
-    });
+    afterModalClose(() =>
+      router.push({
+        pathname: '/user/[id]',
+        params: {
+          id: otherId,
+          name: otherName,
+          report: '1',
+          chatId: id,
+          messageId: target.id,
+          messageText: previewFor(target) || '[message]',
+        },
+      })
+    );
   }
   function copy() {
     if (!menuFor) return;
@@ -325,16 +431,20 @@ export default function ChatScreen() {
     setMenuFor(null);
     const go = () => {
       const isLatest = visible?.[0]?.id === target.id;
-      unsendMessage(id, target.id, isLatest).catch(() => haptics.error());
+      unsendMessage(id, target.id, { isLatest, isPinned: chat?.pinned?.id === target.id }).catch(() =>
+        haptics.error()
+      );
     };
     if (Platform.OS === 'web') {
       if (window.confirm('Unsend this message? It will be removed for everyone.')) go();
       return;
     }
-    Alert.alert('Unsend message?', 'It will be removed for everyone in this chat.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Unsend', style: 'destructive', onPress: go },
-    ]);
+    afterModalClose(() =>
+      Alert.alert('Unsend message?', 'It will be removed for everyone in this chat.', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Unsend', style: 'destructive', onPress: go },
+      ])
+    );
   }
 
   // If I deleted this chat earlier, only show messages that came after.
@@ -346,15 +456,38 @@ export default function ChatScreen() {
   const otherTyping = isTyping(chat, otherId);
   const otherOnline = isOnline(profile?.lastSeen);
   const otherReadAt = chat?.lastRead?.[otherId]?.toMillis() ?? 0;
+  // Messenger-style "seen" avatar sits under my newest message they have read.
+  const lastReadMineId =
+    visible?.find(
+      (m) => m.senderId === myUid && !m.pending && (m.createdAt?.toMillis() ?? Infinity) <= otherReadAt
+    )?.id ?? null;
+  // Photos for the viewer, oldest first so swiping right goes forward in time.
+  const photos = (visible ?? []).filter((m) => m.type === 'image' && m.mediaId && !m.deleted).reverse();
   const canLoadMore = !!messages && messages.length >= pageSize;
+  const term = searchText.trim().toLowerCase();
+  const results = term
+    ? (visible ?? []).filter((m) => !m.deleted && previewFor(m).toLowerCase().includes(term))
+    : [];
+  const pinned = chat?.pinned ?? null;
 
   return (
     <KeyboardAvoidingView
-      style={[styles.flex, { backgroundColor: theme.background }]}
+      style={[
+        styles.flex,
+        { backgroundColor: theme.background },
+        background ? { backgroundImage: background } : null,
+      ]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={headerHeight}>
       <Stack.Screen
         options={{
+          // iOS 26+ makes the header transparent (Liquid Glass) by default. The inverted
+          // message list can't use the system scroll-edge effect, so messages showed
+          // through the header. An opaque header also means the screen starts below it,
+          // which is what keyboardVerticalOffset={headerHeight} assumes.
+          headerTransparent: false,
+          headerStyle: { backgroundColor: theme.background },
+          headerShadowVisible: false,
           headerTitle: () => (
             <Pressable
               onPress={() =>
@@ -388,13 +521,100 @@ export default function ChatScreen() {
       <HeaderActions
         placement="right"
         buttons={[
+          { icon: 'magnifyingglass', label: 'Search', onPress: () => setSearching(true) },
           { icon: 'video', label: 'Video call', onPress: () => call(true) },
           { icon: 'phone', label: 'Voice call', onPress: () => call(false) },
         ]}
       />
 
       <OfflineBanner />
-      {!validChat ? (
+
+      {searching ? (
+        <View style={[styles.searchBar, { borderBottomColor: theme.separator, backgroundColor: theme.background }]}>
+          <View style={[styles.searchField, { backgroundColor: theme.backgroundElement }]}>
+            <Icon name="magnifyingglass" size={15} color={theme.textSecondary} fallback="🔍" />
+            <TextInput
+              autoFocus
+              value={searchText}
+              onChangeText={setSearchText}
+              placeholder="Search in conversation"
+              placeholderTextColor={theme.textSecondary}
+              returnKeyType="search"
+              accessibilityLabel="Search in conversation"
+              style={[styles.searchInput, { color: theme.text }]}
+            />
+          </View>
+          <Pressable onPress={closeSearch} hitSlop={8} accessibilityRole="button">
+            <Text style={[styles.searchCancel, { color: bubbleColor }]}>Cancel</Text>
+          </Pressable>
+        </View>
+      ) : pinned ? (
+        <Pressable
+          onPress={() => jumpTo(pinned.id)}
+          accessibilityRole="button"
+          accessibilityLabel={`Pinned message: ${pinned.text}. Tap to show it.`}
+          style={[styles.pinned, { borderBottomColor: theme.separator, backgroundColor: theme.background }]}>
+          <View style={[styles.pinnedBar, { backgroundColor: bubbleColor }]} />
+          <View style={styles.flex}>
+            <Text style={[styles.pinnedTitle, { color: bubbleColor }]}>Pinned message</Text>
+            <Text style={[styles.pinnedText, { color: theme.text }]} numberOfLines={1}>
+              {pinned.text}
+            </Text>
+          </View>
+          <Pressable
+            onPress={() => setPinned(id, null).catch(() => haptics.error())}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel="Unpin">
+            <Icon name="xmark" size={14} color={theme.textSecondary} fallback="✕" />
+          </Pressable>
+        </Pressable>
+      ) : null}
+
+      {searching ? (
+        <FlatList
+          style={styles.flex}
+          data={results}
+          keyExtractor={(m) => m.id}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          ListEmptyComponent={
+            <Text style={[styles.searchHint, { color: theme.textSecondary }]}>
+              {term ? 'No messages found.' : 'Type to search messages in this chat.'}
+            </Text>
+          }
+          ListFooterComponent={
+            term && canLoadMore ? (
+              <Pressable onPress={() => setPageSize((n) => n + PAGE_SIZE * 2)} style={styles.searchMore}>
+                <Text style={[styles.searchHint, { color: bubbleColor }]}>
+                  Searched the latest {visible?.length ?? 0} messages · Search older
+                </Text>
+              </Pressable>
+            ) : undefined
+          }
+          renderItem={({ item }) => (
+            <Pressable
+              onPress={() => jumpTo(item.id)}
+              style={({ pressed }) => [
+                styles.result,
+                { borderBottomColor: theme.separator },
+                pressed && { backgroundColor: theme.backgroundSelected },
+              ]}>
+              <View style={styles.resultTop}>
+                <Text style={[styles.resultName, { color: theme.text }]}>
+                  {item.senderId === myUid ? 'You' : otherName}
+                </Text>
+                <Text style={[styles.resultTime, { color: theme.textSecondary }]}>
+                  {formatSeparator(item.createdAt)}
+                </Text>
+              </View>
+              <Text style={[styles.resultText, { color: theme.textSecondary }]} numberOfLines={2}>
+                {previewFor(item)}
+              </Text>
+            </Pressable>
+          )}
+        />
+      ) : !validChat ? (
         <ListMessage error="This chat link is not valid." />
       ) : !hasMessages ? (
         messages === null || error ? (
@@ -424,6 +644,18 @@ export default function ChatScreen() {
             scrollEventThrottle={100}
             onEndReachedThreshold={0.3}
             onEndReached={() => canLoadMore && setPageSize((n) => n + PAGE_SIZE)}
+            onScrollToIndexFailed={(info) => {
+              // Rows have different heights: get close first, then retry precisely.
+              listRef.current?.scrollToOffset({
+                offset: info.averageItemLength * info.index,
+                animated: false,
+              });
+              setTimeout(
+                () =>
+                  listRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.5 }),
+                120
+              );
+            }}
             // Inverted: the header sits at the bottom (typing bubble), the footer at the top.
             ListHeaderComponent={otherTyping ? <TypingBubble /> : undefined}
             ListFooterComponent={
@@ -455,18 +687,30 @@ export default function ChatScreen() {
                     animate={sentAt > openedAt}
                     myUid={myUid}
                     otherName={otherName}
+                    starred={isStarred(starred, id, item.id)}
+                    highlighted={highlightId === item.id}
                     onLongPress={openMenu}
+                    onReply={startReply}
+                    onDoubleTap={like}
+                    onCallBack={(video) => call(video)}
+                    onOpenImage={(m) => setViewerStart(Math.max(0, photos.findIndex((p) => p.id === m.id)))}
+                    onShowReactions={setReactionsFor}
                   />
-                  {/* Like iOS: delivery status under my most recent message only. */}
-                  {index === 0 && mine ? (
+                  {item.id === lastReadMineId ? (
+                    // Their little photo marks how far they have read.
+                    <Animated.View
+                      entering={FadeIn.duration(250)}
+                      style={styles.seen}
+                      accessibilityLabel={`Seen by ${otherName} at ${formatMessageTime(
+                        chat?.lastRead?.[otherId] ?? null
+                      )}`}>
+                      <Avatar id={otherId} name={otherName} size={16} uri={profile?.avatarUrl} />
+                    </Animated.View>
+                  ) : index === 0 && mine ? (
                     <Animated.Text
                       entering={FadeIn}
                       style={[styles.status, { color: theme.textSecondary }]}>
-                      {item.pending
-                        ? 'Sending…'
-                        : otherReadAt >= sentAt
-                          ? `Read ${formatMessageTime(chat?.lastRead?.[otherId] ?? null)}`
-                          : 'Delivered'}
+                      {item.pending ? 'Sending…' : 'Delivered'}
                     </Animated.Text>
                   ) : null}
                 </View>
@@ -492,7 +736,7 @@ export default function ChatScreen() {
 
       {hasMessages && error ? <Text style={styles.inlineError}>{error}</Text> : null}
 
-      {iBlocked ? (
+      {searching ? null : iBlocked ? (
         <View style={[styles.blocked, { borderTopColor: theme.separator }]}>
           <Text style={[styles.blockedText, { color: theme.textSecondary }]}>
             You blocked {otherName}. They can&apos;t message you.
@@ -517,7 +761,7 @@ export default function ChatScreen() {
           onCancelReply={() => setReplyTo(null)}
           onSend={handleSend}
           onTyping={(typing) => setTyping(id, myUid, typing).catch(() => {})}
-          onAttach={attach}
+          onAttach={() => setAttachOpen(true)}
           onVoice={sendVoice}
           busyLabel={busyLabel}
         />
@@ -534,6 +778,49 @@ export default function ChatScreen() {
         onUnsend={unsend}
         onEdit={menuFor && canEdit(menuFor, myUid) ? edit : undefined}
         onReport={menuFor && menuFor.senderId !== myUid ? report : undefined}
+        pinned={!!menuFor && pinned?.id === menuFor.id}
+        onPin={pin}
+        starred={!!menuFor && isStarred(starred, id, menuFor.id)}
+        onStar={star}
+        onForward={menuFor && canForward(menuFor) ? forward : undefined}
+      />
+
+      {viewerStart !== null && photos.length ? (
+        <PhotoViewer
+          chatId={id}
+          photos={photos}
+          startIndex={Math.min(viewerStart, photos.length - 1)}
+          senderName={(uid) => (uid === myUid ? 'You' : otherName)}
+          onClose={() => setViewerStart(null)}
+        />
+      ) : null}
+
+      <ReactionsSheet
+        message={reactionsFor}
+        myUid={myUid}
+        people={{
+          [myUid]: { name: displayName ?? 'You', avatarUrl: me?.avatarUrl },
+          [otherId]: { name: otherName, avatarUrl: profile?.avatarUrl },
+        }}
+        onClose={() => setReactionsFor(null)}
+        onRemoveMine={() => {
+          const target = reactionsFor;
+          setReactionsFor(null);
+          const emoji = target?.reactions?.[myUid];
+          if (target && emoji) toggleReaction(id, target, myUid, emoji).catch(() => haptics.error());
+        }}
+      />
+
+      <ActionSheet
+        visible={attachOpen}
+        onClose={() => setAttachOpen(false)}
+        options={[
+          ...(Platform.OS !== 'web'
+            ? [{ label: 'Camera', icon: 'camera.fill' as const, fallback: '📷', onPress: () => sendImages('camera') }]
+            : []),
+          { label: 'Photos', icon: 'photo.on.rectangle', fallback: '🖼', onPress: () => sendImages('library') },
+          { label: 'Location', icon: 'location.fill', fallback: '📍', onPress: shareLocation },
+        ]}
       />
     </KeyboardAvoidingView>
   );
@@ -553,6 +840,7 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.one,
   },
   status: { alignSelf: 'flex-end', fontSize: 11, fontWeight: '500', marginTop: 3, marginRight: 4 },
+  seen: { alignSelf: 'flex-end', marginTop: 3, marginRight: 2 },
   loadingMore: { marginVertical: Spacing.three },
   jumpWrap: { position: 'absolute', right: 14, bottom: 12 },
   jump: {
@@ -563,6 +851,52 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     boxShadow: '0 2px 10px rgba(0,0,0,0.2)',
   },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  searchField: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    height: 36,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 17,
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : {}),
+  },
+  searchCancel: { fontSize: 17 },
+  searchHint: { textAlign: 'center', fontSize: 15, padding: Spacing.four },
+  searchMore: { paddingBottom: Spacing.four },
+  result: {
+    paddingHorizontal: Spacing.three,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 2,
+  },
+  resultTop: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
+  resultName: { fontSize: 15, fontWeight: '600' },
+  resultTime: { fontSize: 13 },
+  resultText: { fontSize: 15, lineHeight: 20 },
+  pinned: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  pinnedBar: { width: 3, alignSelf: 'stretch', borderRadius: 2 },
+  pinnedTitle: { fontSize: 13, fontWeight: '600' },
+  pinnedText: { fontSize: 14 },
   blocked: {
     alignItems: 'center',
     gap: 6,

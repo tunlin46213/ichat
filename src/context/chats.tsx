@@ -12,7 +12,18 @@ type ChatsContextValue = {
   error: string | null;
   /** sum of unread messages across chats (tab badge) */
   totalUnread: number;
+  /** Called for each message that arrives from someone else after start-up. */
+  onIncoming: (listener: (chat: Chat) => void) => () => void;
 };
+
+type IncomingListener = (chat: Chat) => void;
+const incomingListeners = new Set<IncomingListener>();
+function onIncoming(listener: IncomingListener) {
+  incomingListeners.add(listener);
+  return () => {
+    incomingListeners.delete(listener);
+  };
+}
 
 const ChatsContext = createContext<ChatsContextValue | null>(null);
 
@@ -20,25 +31,51 @@ const ChatsContext = createContext<ChatsContextValue | null>(null);
 export function ChatsProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const myUid = user?.uid;
-  const [chats, setChats] = useState<Chat[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Tagged with the uid they belong to, so another account never sees them after
+  // logout → login (this provider now lives in the root layout and isn't remounted).
+  const [state, setState] = useState<{ uid: string; chats: Chat[] | null; error: string | null } | null>(
+    null
+  );
+  const chats = state && state.uid === myUid ? state.chats : null;
+  const error = state && state.uid === myUid ? state.error : null;
 
   useEffect(() => {
     if (!myUid) return;
     // Sorted on the client so Firestore doesn't need a composite index.
     const q = query(collection(db, 'chats'), where('members', 'array-contains', myUid));
+    // Last message time per chat, to tell a new message apart from typing/read updates.
+    const lastSeenAt = new Map<string, number>();
+    let initial = true;
     return onSnapshot(
       q,
       (snap) => {
-        setChats(
-          snap.docs
+        for (const change of snap.docChanges()) {
+          if (change.type === 'removed') continue;
+          const chat = { id: change.doc.id, ...change.doc.data({ serverTimestamps: 'estimate' }) } as Chat;
+          const at = chat.updatedAt?.toMillis() ?? 0;
+          const before = lastSeenAt.get(chat.id);
+          lastSeenAt.set(chat.id, at);
+          if (initial || change.doc.metadata.hasPendingWrites) continue;
+          if (before !== undefined && at <= before) continue;
+          if (!chat.lastSenderId || chat.lastSenderId === myUid || chat.lastMessage == null) continue;
+          incomingListeners.forEach((listener) => listener(chat));
+        }
+        initial = false;
+        setState({
+          uid: myUid,
+          chats: snap.docs
             .map((d) => ({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) }) as Chat)
             .filter((c) => isChatVisibleTo(c, myUid))
-            .sort((a, b) => (b.updatedAt?.toMillis() ?? 0) - (a.updatedAt?.toMillis() ?? 0))
-        );
-        setError(null);
+            .sort((a, b) => (b.updatedAt?.toMillis() ?? 0) - (a.updatedAt?.toMillis() ?? 0)),
+          error: null,
+        });
       },
-      (err) => setError(`Could not load chats (${err.code}).`)
+      (err) =>
+        setState((prev) => ({
+          uid: myUid,
+          chats: prev?.uid === myUid ? prev.chats : null,
+          error: `Could not load chats (${err.code}).`,
+        }))
     );
   }, [myUid]);
 
@@ -49,7 +86,9 @@ export function ChatsProvider({ children }: { children: ReactNode }) {
     if (chats) setAppBadge(totalUnread);
   }, [chats, totalUnread]);
 
-  return <ChatsContext value={{ chats, error, totalUnread }}>{children}</ChatsContext>;
+  return (
+    <ChatsContext value={{ chats, error, totalUnread, onIncoming }}>{children}</ChatsContext>
+  );
 }
 
 export function useChats() {

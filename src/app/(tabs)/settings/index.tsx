@@ -12,10 +12,12 @@ import {
   View,
 } from 'react-native';
 
+import { ActionSheet } from '@/components/action-sheet';
 import { Avatar } from '@/components/avatar';
 import { Icon, type IconName } from '@/components/icon';
 import { LargeTitleHeader } from '@/components/web-header';
 import { Spacing } from '@/constants/theme';
+import { useAppearance } from '@/context/appearance';
 import { authErrorMessage, useAuth } from '@/context/auth';
 import { useBlocks } from '@/context/blocks';
 import { useTheme } from '@/hooks/use-theme';
@@ -95,14 +97,8 @@ export default function SettingsScreen() {
     }
   }
 
-  function photoOptions() {
-    if (Platform.OS === 'web') return changePhoto('library');
-    Alert.alert('Profile Photo', undefined, [
-      { text: 'Take Photo', onPress: () => changePhoto('camera') },
-      { text: 'Choose from Library', onPress: () => changePhoto('library') },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
-  }
+  const [photoSheet, setPhotoSheet] = useState(false);
+  const { bubbleColor } = useAppearance();
   const theme = useTheme();
   const name = displayName ?? 'You';
 
@@ -163,39 +159,75 @@ export default function SettingsScreen() {
         </View>
       ) : null}
 
-      <Pressable
-        onPress={editName}
-        accessibilityRole="button"
-        accessibilityHint="Edit your name"
-        style={({ pressed }) => [
-          styles.card,
-          styles.profile,
-          { backgroundColor: pressed ? theme.backgroundSelected : theme.card },
-        ]}>
-        <Pressable onPress={photoOptions} accessibilityLabel="Change profile photo" hitSlop={4}>
-          <Avatar id={user!.uid} name={name} size={64} uri={myProfile?.avatarUrl} />
-          <View style={[styles.cameraBadge, { borderColor: theme.card }]}>
+      {/* Profile hero: gradient cover, photo (camera button changes it), name, email. */}
+      <View style={[styles.card, styles.hero, { backgroundColor: theme.card }]}>
+        <View
+          style={[
+            styles.cover,
+            {
+              backgroundColor: bubbleColor,
+              backgroundImage: `linear-gradient(135deg, ${bubbleColor} 0%, ${bubbleColor}B3 50%, #FF6CAB 100%)`,
+            },
+          ]}
+        />
+        <View style={styles.avatarWrap}>
+          <View style={[styles.avatarRing, { backgroundColor: theme.card }]}>
+            <Avatar id={user!.uid} name={name} size={104} uri={myProfile?.avatarUrl} />
+          </View>
+          <Pressable
+            onPress={() => setPhotoSheet(true)}
+            disabled={uploading}
+            accessibilityRole="button"
+            accessibilityLabel="Change profile photo"
+            hitSlop={10}
+            style={({ pressed }) => [
+              styles.cameraBadge,
+              { backgroundColor: bubbleColor, borderColor: theme.card, opacity: pressed ? 0.7 : 1 },
+            ]}>
             {uploading ? (
               <ActivityIndicator size="small" color="#fff" />
             ) : (
-              <Icon name="camera.fill" size={11} color="#fff" fallback="+" />
+              <Icon name="camera.fill" size={15} color="#fff" fallback="📷" />
             )}
-          </View>
-        </Pressable>
-        <View style={styles.profileText}>
+          </Pressable>
+        </View>
+        <Pressable
+          onPress={editName}
+          accessibilityRole="button"
+          accessibilityHint="Edit your name"
+          hitSlop={6}
+          style={styles.nameRow}>
           <Text style={[styles.profileName, { color: theme.text }]} numberOfLines={1}>
             {name}
           </Text>
-          <Text style={[styles.profileEmail, { color: theme.textSecondary }]} numberOfLines={1}>
-            {user?.email}
-          </Text>
+          <Icon name="pencil" size={14} color={theme.textSecondary} fallback="✎" />
+        </Pressable>
+        <Text style={[styles.profileEmail, { color: theme.textSecondary }]} numberOfLines={1}>
+          {user?.email}
+        </Text>
+        <View style={[styles.statusPill, { backgroundColor: 'rgba(52,199,89,0.14)' }]}>
+          <View style={styles.statusDot} />
+          <Text style={styles.statusText}>Active now</Text>
         </View>
-        <Icon name="chevron.right" size={14} color={theme.textSecondary} fallback="" />
-      </Pressable>
+      </View>
 
       <Section title="PROFILE">
         <Row icon="pencil" iconBg="#007AFF" label="Edit Name" value={name} onPress={editName} />
-        <Row icon="camera.fill" iconBg="#FF9500" label="Change Photo" onPress={photoOptions} />
+      </Section>
+
+      <Section title="CHATS">
+        <Row
+          icon="paintbrush.fill"
+          iconBg="#AF52DE"
+          label="Appearance"
+          onPress={() => router.push('/settings/appearance' as Href)}
+        />
+        <Row
+          icon="star.fill"
+          iconBg="#FFCC00"
+          label="Starred Messages"
+          onPress={() => router.push('/settings/starred' as Href)}
+        />
       </Section>
 
       {Platform.OS === 'web' ? (
@@ -257,6 +289,18 @@ export default function SettingsScreen() {
       <Text style={[styles.footer, { color: theme.textSecondary }]}>
         iChat {Constants.expoConfig?.version ?? ''}
       </Text>
+
+      <ActionSheet
+        visible={photoSheet}
+        title="Profile Photo"
+        onClose={() => setPhotoSheet(false)}
+        options={[
+          ...(Platform.OS !== 'web'
+            ? [{ label: 'Take Photo', icon: 'camera.fill' as const, fallback: '📷', onPress: () => changePhoto('camera') }]
+            : []),
+          { label: 'Choose from Library', icon: 'photo.on.rectangle', fallback: '🖼', onPress: () => changePhoto('library') },
+        ]}
+      />
     </ScrollView>
   );
 }
@@ -320,21 +364,41 @@ const styles = StyleSheet.create({
   // LargeTitleHeader has its own side padding; cancel the list's so titles line up.
   webHeader: { marginHorizontal: -Spacing.three, marginTop: -Spacing.three },
   card: { borderRadius: 12, overflow: 'hidden' },
-  profile: { flexDirection: 'row', alignItems: 'center', padding: Spacing.three, gap: 14 },
-  profileText: { flex: 1, gap: 2 },
+  hero: {
+    alignItems: 'center',
+    paddingBottom: Spacing.four,
+    paddingHorizontal: Spacing.three,
+    gap: 4,
+    borderRadius: 20,
+  },
+  cover: { alignSelf: 'stretch', height: 92, marginHorizontal: -Spacing.three },
+  avatarWrap: { marginTop: -58, marginBottom: 6 },
+  avatarRing: { padding: 4, borderRadius: 60 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, maxWidth: '90%' },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  statusDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#34C759' },
+  statusText: { fontSize: 12, fontWeight: '600', color: '#34C759' },
   cameraBadge: {
     position: 'absolute',
-    right: -2,
-    bottom: -2,
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 2,
-    backgroundColor: '#007AFF',
+    right: 2,
+    bottom: 2,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 3,
     alignItems: 'center',
     justifyContent: 'center',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
   },
-  profileName: { fontSize: 22, fontWeight: '600' },
+  profileName: { fontSize: 24, fontWeight: '700', letterSpacing: -0.3, flexShrink: 1 },
   profileEmail: { fontSize: 15 },
   sectionHeader: { fontSize: 13, marginTop: Spacing.three, marginBottom: 6, marginLeft: Spacing.three },
   sectionFooter: { fontSize: 13, lineHeight: 18, marginTop: 6, marginHorizontal: Spacing.three },
