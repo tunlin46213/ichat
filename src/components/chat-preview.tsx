@@ -13,6 +13,7 @@ function parse(text: string): Parsed {
   // start with 📷 or 📞 stays plain text.
   if (text === '📷 Photo') return { icon: 'camera.fill', fallback: '📷', label: 'Photo' };
   if (text === '📍 Location') return { icon: 'location.fill', fallback: '📍', label: 'Location' };
+  if (text === '📍 Live location') return { icon: 'location.fill', fallback: '📍', label: 'Live location' };
   const voice = text.match(/^🎤 Voice message(?: \((\d+:\d\d(?::\d\d)?)\))?$/);
   if (voice) {
     return {

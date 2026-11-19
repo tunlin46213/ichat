@@ -34,10 +34,12 @@ export function PulseRing({ size, active, gradient, idleColor, gap, children }: 
       pulse.set(0);
       return;
     }
+    // A few breaths, then rest. An endless animation on every avatar in the list kept
+    // the GPU busy the whole time the chat list was open (battery drain, warm phone).
     pulse.set(
       withRepeat(
         withTiming(1, { duration: 1800, easing: Easing.out(Easing.quad), reduceMotion: ReduceMotion.System }),
-        -1,
+        3,
         false
       )
     );

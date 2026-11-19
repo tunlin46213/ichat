@@ -1,9 +1,10 @@
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
-import { createContext, use, useEffect, useState, type ReactNode } from 'react';
+import { createContext, use, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { useAuth } from '@/context/auth';
-import { isChatVisibleTo, unreadFor, type Chat } from '@/lib/chat';
+import { deliverDueScheduled, isChatVisibleTo, unreadFor, type Chat } from '@/lib/chat';
 import { db } from '@/lib/firebase';
+import { syncTrackers } from '@/lib/live-location';
 import { setAppBadge } from '@/lib/push';
 
 type ChatsContextValue = {
@@ -89,6 +90,51 @@ export function ChatsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (chats) setAppBadge(totalUnread);
   }, [chats, totalUnread]);
+
+  // Deliver scheduled messages whose time has come (from either person's phone).
+  const chatsRef = useRef(chats);
+  useEffect(() => {
+    chatsRef.current = chats;
+  });
+  useEffect(() => {
+    if (!myUid) return;
+    const busy = new Set<string>();
+    const check = () => {
+      const now = Date.now();
+      for (const chat of chatsRef.current ?? []) {
+        const due = Object.values(chat.scheduled ?? {}).some((s) => s && s.at.toMillis() <= now);
+        if (!due || busy.has(chat.id)) continue;
+        busy.add(chat.id);
+        deliverDueScheduled(chat, now)
+          .catch((err) => console.warn('Could not deliver scheduled message', err))
+          .finally(() => busy.delete(chat.id));
+      }
+    };
+    check();
+    const timer = setInterval(check, 15_000);
+    return () => clearInterval(timer);
+  }, [myUid]);
+
+  // Keep my live-location shares running (also after the app was closed and reopened),
+  // and stop the watchers of shares that ended or were stopped from another screen.
+  const liveKey = (chats ?? [])
+    .map((c) => {
+      const live = myUid ? c.live?.[myUid] : null;
+      return live?.until ? `${c.id}:${live.until.toMillis()}` : '';
+    })
+    .filter(Boolean)
+    .join(',');
+  useEffect(() => {
+    const now = Date.now();
+    const keep = new Map<string, number>();
+    for (const entry of liveKey ? liveKey.split(',') : []) {
+      const [chatId, until] = entry.split(':');
+      if (Number(until) > now) keep.set(chatId, Number(until));
+    }
+    // Signed out: stop everything.
+    syncTrackers(myUid ?? '', myUid ? keep : new Map());
+  }, [myUid, liveKey]);
+  useEffect(() => () => syncTrackers('', new Map()), []);
 
   return (
     <ChatsContext value={{ chats, error, totalUnread, onIncoming }}>{children}</ChatsContext>

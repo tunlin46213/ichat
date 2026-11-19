@@ -3,9 +3,10 @@ import {
   deleteField,
   doc,
   increment,
+  runTransaction,
   serverTimestamp,
   setDoc,
-  type Timestamp,
+  Timestamp,
   updateDoc,
   writeBatch,
   type WriteBatch,
@@ -42,11 +43,30 @@ export type Chat = {
   pinnedAt?: Record<string, Timestamp | null>;
   /** Per-user: when they archived it (out of the main list). */
   archivedAt?: Record<string, Timestamp | null>;
+  /** Messages waiting for their send time (message id → when / who / preview). */
+  scheduled?: Record<string, ScheduledRef | null>;
+  /** Shared countdowns shown at the top of the chat ("Trip ⛰️ — in 5 days"). */
+  countdowns?: Record<string, Countdown | null>;
   /** Per-user live activity ("recording voice…", "choosing a photo…"). */
   activity?: Record<string, { kind: ActivityKind; at: Timestamp | null } | null>;
+  /** Per-user live location share (updated while their app is open, until `until`). */
+  live?: Record<string, LiveLocation | null>;
+};
+
+export type LiveLocation = {
+  lat: number;
+  lng: number;
+  /** last position update */
+  at: Timestamp | null;
+  until: Timestamp;
+  /** the "Live location" message this share belongs to */
+  messageId: string;
 };
 
 export type ActivityKind = 'recording' | 'photo';
+
+export type ScheduledRef = { at: Timestamp; senderId: string; preview: string };
+export type Countdown = { title: string; emoji: string; at: Timestamp; by: string };
 
 export const MAX_PINNED_CHATS = 5;
 
@@ -77,8 +97,12 @@ export type Message = {
   /** shared location */
   lat?: number;
   lng?: number;
+  /** live location: shared until then (positions live in chat.live, see LiveLocation) */
+  liveUntil?: Timestamp;
   /** sent with "Forward" from another chat */
   forwarded?: boolean;
+  /** sent with "Schedule": createdAt is the send time, hidden from them until then */
+  scheduled?: boolean;
   editedAt?: Timestamp | null;
   senderId: string;
   createdAt: Timestamp | null;
@@ -218,6 +242,58 @@ export async function sendLocation(
   notifyRecipient(chatId, '📍 Location');
 }
 
+/**
+ * Starts sharing my live location for `minutes`: a "Live location" message plus my
+ * entry in chat.live, which my phone keeps updating (lib/live-location.ts).
+ */
+export async function sendLiveLocation(
+  chatId: string,
+  senderId: string,
+  recipientId: string,
+  coords: { lat: number; lng: number },
+  minutes: number
+) {
+  const until = Timestamp.fromMillis(Date.now() + minutes * 60_000);
+  const batch = writeBatch(db);
+  const ref = doc(collection(db, 'chats', chatId, 'messages'));
+  batch.set(ref, {
+    type: 'location',
+    text: '',
+    senderId,
+    createdAt: serverTimestamp(),
+    lat: coords.lat,
+    lng: coords.lng,
+    liveUntil: until,
+  });
+  addChatUpdate(batch, chatId, senderId, recipientId, '📍 Live location');
+  batch.update(chatRef(chatId), {
+    [`live.${senderId}`]: { lat: coords.lat, lng: coords.lng, at: serverTimestamp(), until, messageId: ref.id },
+  });
+  await batch.commit();
+  notifyRecipient(chatId, '📍 Live location');
+  return until.toMillis();
+}
+
+/** New position for my running live share. */
+export function updateLiveLocation(chatId: string, uid: string, coords: { lat: number; lng: number }) {
+  return updateDoc(chatRef(chatId), {
+    [`live.${uid}.lat`]: coords.lat,
+    [`live.${uid}.lng`]: coords.lng,
+    [`live.${uid}.at`]: serverTimestamp(),
+  });
+}
+
+/** Ends my live share now (the last position stays visible as "ended"). */
+export function stopLiveLocation(chatId: string, uid: string) {
+  return updateDoc(chatRef(chatId), { [`live.${uid}.until`]: Timestamp.now() });
+}
+
+/** Their live share, if it is still running. */
+export function activeLive(chat: Pick<Chat, 'live'> | null | undefined, uid: string, now: number) {
+  const live = chat?.live?.[uid];
+  return live && typeof live.lat === 'number' && (live.until?.toMillis() ?? 0) > now ? live : null;
+}
+
 /** Pins a message for both members, or clears the pin with null. */
 export function setPinned(chatId: string, pinned: PinnedRef | null) {
   return updateDoc(chatRef(chatId), { pinned });
@@ -233,7 +309,7 @@ export function formatDuration(ms: number) {
 
 /** One-line description of a message for previews, replies, pins and notifications. */
 export function previewFor(
-  message: Pick<Message, 'type' | 'text' | 'durationMs' | 'callType' | 'callStatus'>
+  message: Pick<Message, 'type' | 'text' | 'durationMs' | 'callType' | 'callStatus' | 'liveUntil'>
 ) {
   switch (message.type ?? 'text') {
     case 'image':
@@ -243,7 +319,7 @@ export function previewFor(
         ? `🎤 Voice message (${formatDuration(message.durationMs)})`
         : '🎤 Voice message';
     case 'location':
-      return '📍 Location';
+      return message.liveUntil ? '📍 Live location' : '📍 Location';
     case 'call': {
       const icon = message.callType === 'video' ? '📹' : '📞';
       const kind = message.callType === 'video' ? 'Video call' : 'Voice call';
@@ -486,3 +562,97 @@ export function isOnline(lastSeen: Timestamp | null | undefined) {
   return !!lastSeen && Date.now() - lastSeen.toMillis() < 2 * 60000;
 }
 
+// ── Scheduled messages ──
+// The message is written right away with createdAt = send time, so it sorts into
+// place. The other person's app hides it until then. Whichever member's app is open
+// once the time has passed "delivers" it: chat preview, unread count, banner.
+
+export const MAX_SCHEDULE_DAYS = 30;
+
+export async function scheduleMessage(chatId: string, senderId: string, text: string, at: Date) {
+  const batch = writeBatch(db);
+  const ref = doc(collection(db, 'chats', chatId, 'messages'));
+  const when = Timestamp.fromDate(at);
+  batch.set(ref, { text, senderId, createdAt: when, scheduled: true });
+  batch.update(chatRef(chatId), {
+    [`scheduled.${ref.id}`]: { at: when, senderId, preview: text.slice(0, 200) } satisfies ScheduledRef,
+  });
+  await batch.commit();
+}
+
+/** Removes a scheduled message before it goes out. */
+export async function cancelScheduled(chatId: string, messageId: string) {
+  const batch = writeBatch(db);
+  batch.delete(messageRef(chatId, messageId));
+  batch.update(chatRef(chatId), { [`scheduled.${messageId}`]: deleteField() });
+  await batch.commit();
+}
+
+/** True while my own scheduled message hasn't reached its time yet. */
+export function isScheduledPending(message: Message, now: number) {
+  return !!message.scheduled && (message.createdAt?.toMillis() ?? 0) > now;
+}
+
+/**
+ * Delivers any scheduled messages in this chat whose time has come. Safe to call from
+ * both phones at once: a transaction makes sure each one is delivered only once.
+ */
+export async function deliverDueScheduled(chat: Chat, now = Date.now()) {
+  const due = Object.entries(chat.scheduled ?? {}).filter(([, s]) => s && s.at.toMillis() <= now);
+  for (const [id] of due) {
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(chatRef(chat.id));
+      const entry = (snap.get('scheduled') as Chat['scheduled'])?.[id];
+      if (!entry) return; // already delivered (or cancelled)
+      const members = (snap.get('members') as string[]) ?? [];
+      const recipient = members.find((m) => m !== entry.senderId) ?? '';
+      const updatedAt = snap.get('updatedAt') as Timestamp | null;
+      const newer = updatedAt && updatedAt.toMillis() > entry.at.toMillis();
+      tx.update(chatRef(chat.id), {
+        [`scheduled.${id}`]: deleteField(),
+        [`unread.${recipient}`]: increment(1),
+        // Don't replace the preview with an older message.
+        ...(newer ? {} : { lastMessage: entry.preview, lastSenderId: entry.senderId, updatedAt: entry.at }),
+      });
+    });
+  }
+}
+
+// ── Countdowns ──
+
+export function addCountdown(chatId: string, by: string, title: string, emoji: string, at: Date) {
+  const id = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
+  return updateDoc(chatRef(chatId), {
+    [`countdowns.${id}`]: { title: title.trim().slice(0, 60), emoji, at: Timestamp.fromDate(at), by } satisfies Countdown,
+  });
+}
+
+export function removeCountdown(chatId: string, id: string) {
+  return updateDoc(chatRef(chatId), { [`countdowns.${id}`]: deleteField() });
+}
+
+/** Whole days from today to `at` (calendar days, local time). */
+export function daysUntil(at: Timestamp, now: number) {
+  const a = at.toDate();
+  const b = new Date(now);
+  const day = (d: Date) => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  return Math.round((day(a) - day(b)) / 86_400_000);
+}
+
+/** "Today 🎉", "Tomorrow", "in 5 days", "in 3 months". */
+export function formatCountdown(days: number) {
+  if (days === 0) return 'Today 🎉';
+  if (days === 1) return 'Tomorrow';
+  if (days < 0) return days === -1 ? 'Yesterday' : `${-days} days ago`;
+  if (days < 60) return `in ${days} days`;
+  return `in ${Math.round(days / 30)} months`;
+}
+
+/** Countdowns not more than a day past, soonest first. */
+export function upcomingCountdowns(chat: Pick<Chat, 'countdowns'> | null | undefined, now: number) {
+  return Object.entries(chat?.countdowns ?? {})
+    .filter((e): e is [string, Countdown] => !!e[1])
+    .map(([id, c]) => ({ id, ...c, days: daysUntil(c.at, now) }))
+    .filter((c) => c.days >= -1)
+    .sort((a, b) => a.at.toMillis() - b.at.toMillis());
+}

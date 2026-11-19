@@ -17,18 +17,18 @@ export default function TabsLayout() {
   const { totalUnread } = useChats();
   const { bottom } = useSafeAreaInsets();
   return (
-    <Tabs style={styles.flex}>
-      <TabSlot style={styles.flex} />
+    <Tabs style={[styles.flex, { backgroundColor: theme.background }]}>
+      {/* Room below the content for the floating bar, so nothing hides behind it. */}
+      <TabSlot style={[styles.flex, { marginBottom: BAR_HEIGHT + Math.max(bottom, 10) + 8 }]} />
+      {/* Floating glass capsule, like the iOS 26 tab bar the iPhone app uses. */}
       <TabList
         style={[
           styles.bar,
           {
-            // Frosted glass bar, like iOS.
-            backgroundColor: theme.scheme === 'dark' ? 'rgba(18,18,22,0.72)' : 'rgba(255,255,255,0.72)',
-            backdropFilter: 'blur(20px) saturate(180%)',
-            borderTopColor: theme.glassHairline,
-            // Room for the home indicator, like on iPhone.
-            paddingBottom: Math.max(bottom, 8),
+            bottom: Math.max(bottom, 10),
+            backgroundColor: theme.scheme === 'dark' ? 'rgba(30,30,34,0.78)' : 'rgba(255,255,255,0.8)',
+            backdropFilter: 'blur(24px) saturate(180%)',
+            borderColor: theme.glassBorder,
           },
         ]}>
         <TabTrigger name="chats" href={'/chats' as Href} asChild>
@@ -62,7 +62,7 @@ function TabButton({ label, icon, activeIcon, badge = 0, isFocused, ...props }: 
   const color = isFocused ? theme.accent : '#8E8E93';
   return (
     <Pressable {...props} accessibilityRole="tab" style={styles.tab}>
-      <View style={styles.tabInner}>
+      <View style={[styles.tabInner, isFocused && [styles.tabOn, { backgroundColor: theme.glassStrong }]]}>
         {/* Re-keyed so the icon bounces when its tab is selected. */}
         <Animated.View key={isFocused ? 'on' : 'off'} entering={isFocused ? ZoomIn.springify().damping(9) : undefined}>
           <Icon name={isFocused ? activeIcon : icon} size={25} color={color} fallback="•" />
@@ -74,15 +74,24 @@ function TabButton({ label, icon, activeIcon, badge = 0, isFocused, ...props }: 
   );
 }
 
+const BAR_HEIGHT = 62;
+
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   bar: {
+    position: 'absolute',
+    alignSelf: 'center',
     flexDirection: 'row',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    paddingTop: 6,
+    width: 220,
+    height: BAR_HEIGHT,
+    padding: 4,
+    borderRadius: BAR_HEIGHT / 2,
+    borderWidth: StyleSheet.hairlineWidth,
+    boxShadow: '0 8px 30px rgba(0,0,0,0.25)',
   },
-  tab: { flex: 1, alignItems: 'center' },
-  tabInner: { alignItems: 'center', gap: 2 },
+  tab: { flex: 1, alignItems: 'stretch' },
+  tabOn: { borderRadius: (BAR_HEIGHT - 8) / 2 },
+  tabInner: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 2 },
   tabLabel: { fontSize: 10, fontWeight: '500' },
-  badge: { position: 'absolute', top: -4, left: 18, height: 18, minWidth: 18, borderRadius: 9 },
+  badge: { position: 'absolute', top: 2, left: '56%', height: 18, minWidth: 18, borderRadius: 9 },
 });

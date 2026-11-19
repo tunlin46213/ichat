@@ -124,6 +124,7 @@ export function Composer({
   busyLabel,
   draftKey,
   onActivity,
+  onSchedule,
 }: {
   enabled: boolean;
   initialText?: string;
@@ -145,6 +146,8 @@ export function Composer({
   draftKey?: string;
   /** "recording" while a voice note is being recorded, null when it ends */
   onActivity?: (kind: 'recording' | null) => void;
+  /** long press on Send: schedule `text`; call `clear` once it's scheduled */
+  onSchedule?: (text: string, clear: () => void) => void;
 }) {
   const theme = useTheme();
   const { bubbleColor, textScale } = useAppearance();
@@ -201,6 +204,14 @@ export function Composer({
       lastSignal.current = now;
       onTyping(true);
     }
+  }
+
+  /** Long press on Send: pick a time; the text is cleared once it's scheduled. */
+  function scheduleDraft() {
+    const text = draft.trim();
+    if (!text || !enabled || !onSchedule) return;
+    haptics.medium();
+    onSchedule(text, () => setDraft(''));
   }
 
   async function send() {
@@ -452,6 +463,7 @@ export function Composer({
               <SendButton
                 active={canSend}
                 onPress={send}
+                onLongPress={!editing && onSchedule ? scheduleDraft : undefined}
                 icon={editing ? 'checkmark' : 'arrow.up'}
                 label={editing ? 'Save edit' : 'Send'}
                 color={bubbleColor}
@@ -562,9 +574,10 @@ function MicButton({ recording, willCancel, color }: {
 }
 
 /** Round gradient send / save button. Springs in when it becomes active. */
-function SendButton({ active, onPress, icon, label, color }: {
+function SendButton({ active, onPress, onLongPress, icon, label, color }: {
   active: boolean;
   onPress: () => void;
+  onLongPress?: () => void;
   icon: IconName;
   label: string;
   color: string;
@@ -576,9 +589,12 @@ function SendButton({ active, onPress, icon, label, color }: {
   return (
     <Pressable
       onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={350}
       disabled={!active}
       accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityHint={onLongPress ? 'Long press to schedule' : undefined}
       hitSlop={6}>
       <Animated.View
         style={[

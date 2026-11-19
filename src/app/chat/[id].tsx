@@ -26,6 +26,16 @@ import { OfflineBanner } from '@/components/banners';
 import { ChatHeaderTitle } from '@/components/chat/chat-header-title';
 import { Composer } from '@/components/chat/composer';
 import { MessageBubble } from '@/components/chat/message-bubble';
+import { CountdownBar, CountdownSheet } from '@/components/chat/countdowns';
+import {
+  LIVE_DURATIONS,
+  LiveBar,
+  LiveLocationContext,
+  LiveMapSheet,
+  stopSharing,
+} from '@/components/chat/live-location';
+import { MemoryCard, MemorySheet } from '@/components/chat/memory-card';
+import { formatWhen, ScheduleSheet } from '@/components/chat/schedule-sheet';
 import { ScreenEffect } from '@/components/chat/screen-effect';
 import { SmartReplies } from '@/components/chat/smart-replies';
 import { MessageMenu, type MenuAnchor } from '@/components/chat/message-menu';
@@ -57,10 +67,15 @@ import {
   formatSeparator,
   isOnline,
   activityOf,
+  cancelScheduled,
+  isScheduledPending,
+  scheduleMessage,
+  upcomingCountdowns,
   isTyping,
   markRead,
   needsSeparator,
   previewFor,
+  sendLiveLocation,
   sendLocation,
   sendMessage,
   setActivity,
@@ -78,7 +93,9 @@ import { canForward } from '@/lib/forward';
 import { useDrafts } from '@/lib/drafts';
 import { effectFor } from '@/lib/effects';
 import { haptics } from '@/lib/haptics';
+import { startTracking } from '@/lib/live-location';
 import { getCurrentCoords, locationErrorMessage } from '@/lib/location';
+import { dismissMemory, findMemory, type Memory } from '@/lib/memories';
 import { mediaErrorMessage, pickImages, sendMediaMessage } from '@/lib/media';
 import { setActiveChat } from '@/lib/push';
 import { suggestReplies } from '@/lib/smart-replies';
@@ -99,6 +116,9 @@ function sendErrorMessage(err: unknown, otherName: string) {
 }
 
 const PAGE_SIZE = 50;
+
+/** Countdowns already celebrated with confetti this session (not again on every open). */
+const celebratedCountdowns = new Set<string>();
 const VIEWABILITY = { itemVisiblePercentThreshold: 10 };
 
 export default function ChatRoute() {
@@ -127,7 +147,10 @@ function ChatScreen() {
   const headerHeight = useHeaderHeight();
   const listRef = useRef<FlatList<Message>>(null);
   // Re-render every few seconds so "typing…" and presence labels stay current.
-  useNow(4000);
+  const now = useNow(4000);
+  // The message list only needs a coarse clock (scheduled messages, countdowns). Using
+  // the 4 s one there re-rendered every visible bubble 15 times a minute.
+  const listNow = Math.floor(now / 30_000) * 30_000;
   const myUid = user!.uid;
 
   const profile = useUserProfile(otherId);
@@ -135,6 +158,7 @@ function ChatScreen() {
   const { isBlocked, unblock } = useBlocks();
   const iBlocked = isBlocked(otherId);
   const otherName = profile?.name ?? name ?? 'Chat';
+  const nameOf = (uid: string) => (uid === myUid ? (displayName ?? 'You') : otherName);
 
   const [ready, setReady] = useState(false);
   const [chat, setChat] = useState<Chat | null>(null);
@@ -160,6 +184,14 @@ function ChatScreen() {
     () => listChats?.find((c) => c.id === id)?.unread?.[myUid] ?? null
   );
   const [playedEffects, setPlayedEffects] = useState<string[]>([]);
+  const [scheduling, setScheduling] = useState<{ text: string; clear: () => void; openedAt: number } | null>(null);
+  const [scheduledMenu, setScheduledMenu] = useState<Message | null>(null);
+  const [countdownSheet, setCountdownSheet] = useState<'list' | 'add' | null>(null);
+  const [locationSheet, setLocationSheet] = useState(false);
+  const [liveMapOpen, setLiveMapOpen] = useState(false);
+  const [memory, setMemory] = useState<Memory | null>(null);
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [celebrated, setCelebrated] = useState<string[]>(() => [...celebratedCountdowns]);
   const jumpedToUnread = useRef(false);
   // Floating "Today" / "Yesterday" pill at the top while scrolling through history.
   const [topDay, setTopDay] = useState<string | null>(null);
@@ -239,6 +271,20 @@ function ChatScreen() {
       setUnreadAtOpen((prev) => prev ?? data?.unread?.[myUid] ?? 0);
     });
   }, [ready, id, myUid]);
+
+  // "On this day": once the chat doc is here (messages I deleted before don't count).
+  const memoryHiddenBefore = chat ? (chat.hiddenAt?.[myUid]?.toMillis() ?? 0) : null;
+  useEffect(() => {
+    if (!ready || memoryHiddenBefore === null) return;
+    let cancelled = false;
+    findMemory(id, memoryHiddenBefore).then(
+      (m) => !cancelled && setMemory(m),
+      () => {}
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, id, memoryHiddenBefore]);
 
   // Mark as read on open, whenever new messages arrive, and when the app returns.
   const myUnread = chat?.unread?.[myUid] ?? 0;
@@ -380,6 +426,22 @@ function ChatScreen() {
       setBusyLabel(null);
     }
   }
+  async function shareLiveLocation(minutes: number) {
+    try {
+      setBusyLabel('Getting your location…');
+      const coords = await getCurrentCoords();
+      setBusyLabel('Starting live location…');
+      const until = await sendLiveLocation(id, myUid, otherId, coords, minutes);
+      startTracking(id, myUid, until);
+      haptics.success();
+      playSendSound();
+      listRef.current?.scrollToOffset({ offset: 0, animated: true });
+    } catch (err) {
+      toast.error(locationErrorMessage(err));
+    } finally {
+      setBusyLabel(null);
+    }
+  }
   async function sendVoice(uri: string, durationMs: number, waveform: number[]) {
     try {
       setBusyLabel('Sending voice message…');
@@ -417,6 +479,11 @@ function ChatScreen() {
   // ── Long-press menu actions ──
   function openMenu(message: Message, anchor?: MenuAnchor) {
     if (message.pending) return;
+    if (message.senderId === myUid && isScheduledPending(message, Date.now())) {
+      haptics.medium();
+      setScheduledMenu(message);
+      return;
+    }
     haptics.medium();
     setMenuAnchor(anchor ?? null);
     setMenuFor(message);
@@ -513,6 +580,8 @@ function ChatScreen() {
     setMenuFor(null);
     const go = () => {
       const isLatest = visible?.[0]?.id === target.id;
+      // Unsending a running live location also ends the share.
+      if (target.liveUntil && chat?.live?.[myUid]?.messageId === target.id) stopSharing(id, myUid);
       unsendMessage(id, target.id, { isLatest, isPinned: chat?.pinned?.id === target.id }).catch(() =>
         toast.error('Could not unsend the message')
       );
@@ -532,8 +601,13 @@ function ChatScreen() {
   // If I deleted this chat earlier, only show messages that came after.
   const hiddenBefore = chat?.hiddenAt?.[myUid]?.toMillis() ?? 0;
   const visible =
-    messages?.filter((m) => !hiddenBefore || (m.createdAt?.toMillis() ?? Infinity) > hiddenBefore) ??
-    null;
+    messages?.filter(
+      (m) =>
+        (!hiddenBefore || (m.createdAt?.toMillis() ?? Infinity) > hiddenBefore) &&
+        // Their scheduled messages stay hidden until the send time.
+        !(m.senderId !== myUid && m.scheduled && (m.createdAt?.toMillis() ?? 0) > listNow)
+    ) ?? null;
+  const countdowns = upcomingCountdowns(chat, listNow);
   const hasMessages = !!visible && visible.length > 0;
   const otherTyping = isTyping(chat, otherId);
   const otherOnline = isOnline(profile?.lastSeen);
@@ -573,12 +647,15 @@ function ChatScreen() {
 
   // Quick replies to the newest message, when it's theirs and I'm not mid-typing.
   const drafts = useDrafts();
-  const newest = visible?.[0];
+  // Newest real message (my scheduled ones waiting to go out don't count).
+  const newest = visible?.find((m) => !isScheduledPending(m, listNow));
   const smartFor =
     newest && newest.senderId !== myUid && !newest.pending && !editing && !replyTo && !drafts[id]?.trim()
       ? newest
       : null;
   const smartReplies = smartFor ? suggestReplies(smartFor) : [];
+  // Confetti once when a countdown in this chat reaches its day.
+  const celebrate = countdowns.find((c) => c.days === 0 && !celebrated.includes(c.id))?.id ?? null;
   // Full-screen effect for a new "Happy birthday" / "Congrats" / "Love you" message
   // (sent or received while the chat is open), played once per message.
   const effectKind =
@@ -588,6 +665,7 @@ function ChatScreen() {
       : null;
 
   return (
+    <LiveLocationContext value={{ chatId: id, myUid, live: chat?.live, nameOf, openMap: () => setLiveMapOpen(true) }}>
     <KeyboardAvoidingView
       style={[
         styles.flex,
@@ -671,7 +749,33 @@ function ChatScreen() {
             <Text style={[styles.searchCancel, { color: bubbleColor }]}>Cancel</Text>
           </Pressable>
         </View>
-      ) : pinned ? (
+      ) : null}
+
+      {!searching && countdowns.length ? (
+        <CountdownBar
+          next={countdowns[0]}
+          more={countdowns.length - 1}
+          onPress={() => setCountdownSheet('list')}
+        />
+      ) : null}
+
+      {!searching ? (
+        <LiveBar chat={chat} myUid={myUid} nameOf={nameOf} onPress={() => setLiveMapOpen(true)} />
+      ) : null}
+
+      {!searching && memory ? (
+        <MemoryCard
+          memory={memory}
+          onOpen={() => setMemoryOpen(true)}
+          onDismiss={() => {
+            haptics.light();
+            setMemory(null);
+            dismissMemory(id).catch(() => {});
+          }}
+        />
+      ) : null}
+
+      {searching ? null : pinned ? (
         <Pressable
           onPress={() => jumpTo(pinned.id)}
           accessibilityRole="button"
@@ -841,6 +945,11 @@ function ChatScreen() {
                     starred={isStarred(starred, id, item.id)}
                     read={mine && !item.pending && sentAt <= otherReadAt}
                     avatar={{ id: otherId, name: otherName, uri: profile?.avatarUrl }}
+                    scheduledFor={
+                      mine && isScheduledPending(item, listNow) && item.createdAt
+                        ? formatWhen(item.createdAt.toDate(), new Date(listNow))
+                        : null
+                    }
                     highlighted={highlightId === item.id}
                     onLongPress={openMenu}
                     onReply={startReply}
@@ -939,6 +1048,7 @@ function ChatScreen() {
           busyLabel={busyLabel}
           draftKey={id}
           onActivity={(kind) => setActivity(id, myUid, kind).catch(() => {})}
+          onSchedule={(text, clear) => setScheduling({ text, clear, openedAt: Date.now() })}
         />
         </>
       )}
@@ -989,12 +1099,130 @@ function ChatScreen() {
         }}
       />
 
+      {scheduling ? (
+        <ScheduleSheet
+          text={scheduling.text}
+          openedAt={scheduling.openedAt}
+          onClose={() => setScheduling(null)}
+          onSchedule={(when) => {
+            const { text, clear } = scheduling;
+            setScheduling(null);
+            scheduleMessage(id, myUid, text, when).then(
+              () => {
+                clear();
+                toast.success(`Scheduled for ${formatWhen(when)}`, 'clock');
+                listRef.current?.scrollToOffset({ offset: 0, animated: true });
+              },
+              () => toast.error('Could not schedule the message.')
+            );
+          }}
+        />
+      ) : null}
+
+      <ActionSheet
+        visible={!!scheduledMenu}
+        title={
+          scheduledMenu?.createdAt ? `Scheduled for ${formatWhen(scheduledMenu.createdAt.toDate())}` : 'Scheduled'
+        }
+        onClose={() => setScheduledMenu(null)}
+        options={[
+          {
+            label: 'Send Now',
+            icon: 'paperplane.fill',
+            fallback: '➤',
+            onPress: () => {
+              const target = scheduledMenu;
+              if (!target) return;
+              cancelScheduled(id, target.id)
+                .then(() => sendMessage(id, myUid, otherId, target.text))
+                .then(
+                  () => toast.success('Sent', 'paperplane.fill'),
+                  // Cancelling fails once the send time has passed: it already went out.
+                  () => toast.info('It was already sent, or the connection failed.')
+                );
+            },
+          },
+          {
+            label: 'Copy Text',
+            icon: 'doc.on.doc',
+            fallback: '⧉',
+            onPress: () => {
+              if (!scheduledMenu) return;
+              Clipboard.setStringAsync(scheduledMenu.text).then(() => toast.success('Copied', 'doc.on.doc'));
+            },
+          },
+          {
+            label: 'Cancel Message',
+            icon: 'trash.fill',
+            fallback: '🗑',
+            onPress: () => {
+              const target = scheduledMenu;
+              if (!target) return;
+              cancelScheduled(id, target.id).then(
+                () => toast.success('Scheduled message cancelled', 'trash.fill'),
+                () => toast.error('Could not cancel it.')
+              );
+            },
+          },
+        ]}
+      />
+
+      {countdownSheet ? (
+        <CountdownSheet
+          chatId={id}
+          myUid={myUid}
+          countdowns={countdowns}
+          startAdding={countdownSheet === 'add'}
+          onClose={() => setCountdownSheet(null)}
+        />
+      ) : null}
+
+      {celebrate ? (
+        <ScreenEffect
+          key={`countdown-${celebrate}`}
+          kind="confetti"
+          seed={celebrate.length}
+          onDone={() => {
+            celebratedCountdowns.add(celebrate);
+            setCelebrated((ids) => [...ids, celebrate]);
+          }}
+        />
+      ) : null}
+
       {effectKind && newest ? (
         <ScreenEffect
           key={newest.id}
           kind={effectKind}
           seed={newest.id.charCodeAt(0) + newest.id.length}
           onDone={() => setPlayedEffects((ids) => [...ids, newest.id])}
+        />
+      ) : null}
+
+      <ActionSheet
+        visible={locationSheet}
+        title="Share your location"
+        onClose={() => setLocationSheet(false)}
+        options={[
+          { label: 'Send Current Location', icon: 'mappin.circle.fill', fallback: '📍', onPress: shareLocation },
+          ...LIVE_DURATIONS.map((d) => ({
+            label: `Share Live for ${d.label}`,
+            icon: 'location.fill' as const,
+            fallback: '🟢',
+            onPress: () => shareLiveLocation(d.minutes),
+          })),
+        ]}
+      />
+
+      {liveMapOpen ? (
+        <LiveMapSheet chat={chat} myUid={myUid} nameOf={nameOf} onClose={() => setLiveMapOpen(false)} />
+      ) : null}
+
+      {memoryOpen && memory ? (
+        <MemorySheet
+          chatId={id}
+          memory={memory}
+          nameOf={(uid) => (uid === myUid ? 'You' : otherName)}
+          onClose={() => setMemoryOpen(false)}
         />
       ) : null}
 
@@ -1006,10 +1234,12 @@ function ChatScreen() {
             ? [{ label: 'Camera', icon: 'camera.fill' as const, fallback: '📷', onPress: () => sendImages('camera') }]
             : []),
           { label: 'Photos', icon: 'photo.on.rectangle', fallback: '🖼', onPress: () => sendImages('library') },
-          { label: 'Location', icon: 'location.fill', fallback: '📍', onPress: shareLocation },
+          { label: 'Location', icon: 'location.fill', fallback: '📍', onPress: () => setLocationSheet(true) },
+          { label: 'Countdown', icon: 'calendar', fallback: '📅', onPress: () => setCountdownSheet('add') },
         ]}
       />
     </KeyboardAvoidingView>
+    </LiveLocationContext>
   );
 }
 

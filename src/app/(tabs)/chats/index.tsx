@@ -89,8 +89,10 @@ export default function ChatsScreen() {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [showArchived, setShowArchived] = useState(false);
-  // Re-render every few seconds so "typing…" and online rings expire.
-  useNow(5000);
+  // Re-render so "typing…" and online dots expire: often while someone is typing,
+  // rarely otherwise (each tick redraws the whole list).
+  const someoneTyping = (chats ?? []).some((c) => isTyping(c, otherMemberId(c, myUid)));
+  useNow(someoneTyping ? 3000 : 20_000);
 
   const profileOf = (c: Chat) => profiles[otherMemberId(c, myUid)];
   const nameOf = (c: Chat) =>
@@ -435,6 +437,7 @@ function ChatRow({ chat, myUid, profile, name, pinnedCount }: {
   const pinned = isPinnedFor(chat, myUid);
   const archived = isArchivedFor(chat, myUid);
   const draft = drafts[chat.id];
+  const myScheduled = Object.values(chat.scheduled ?? {}).filter((x) => x?.senderId === myUid).length;
   const typing = isTyping(chat, otherId);
   const online = isOnline(profile?.lastSeen);
   const sentByMe = chat.lastSenderId === myUid;
@@ -534,7 +537,8 @@ function ChatRow({ chat, myUid, profile, name, pinnedCount }: {
         styles.card,
         {
           borderColor: unread > 0 ? `${theme.accent}66` : theme.glassBorder,
-          boxShadow: unread > 0 ? `0 6px 22px ${theme.accent}38` : Elevation.card,
+          // Shadows on every scrolling row are costly on iOS; only unread chats glow.
+          boxShadow: unread > 0 ? `0 4px 16px ${theme.accent}30` : undefined,
         },
       ]}>
     <Swipeable
@@ -575,6 +579,12 @@ function ChatRow({ chat, myUid, profile, name, pinnedCount }: {
               {name}
             </Text>
             {pinned ? <Icon name="pin.fill" size={11} color={theme.warning} fallback="📌" /> : null}
+            {myScheduled ? (
+              <View style={styles.scheduledTag} accessibilityLabel={`${myScheduled} scheduled`}>
+                <Icon name="clock" size={11} color={theme.accent} fallback="🕓" />
+                {myScheduled > 1 ? <Text style={[styles.scheduledCount, { color: theme.accent }]}>{myScheduled}</Text> : null}
+              </View>
+            ) : null}
             {muted ? <Icon name="bell.slash.fill" size={12} color={theme.textSecondary} fallback="🔕" /> : null}
             <Text
               style={[
@@ -902,6 +912,8 @@ function EmptyState({ onNewChat }: { onNewChat: () => void }) {
 const styles = StyleSheet.create({
   listContent: { paddingBottom: Spacing.four },
   transparent: { backgroundColor: 'transparent' },
+  scheduledTag: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  scheduledCount: { fontSize: 11, fontWeight: '700' },
   suggested: { marginTop: 10 },
   suggestedRow: { gap: 10, paddingHorizontal: 12, paddingTop: 4, paddingBottom: 12 },
   suggestCard: {

@@ -100,7 +100,14 @@
           }
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "iChat uses the microphone to record voice messages and for voice calls.",
+          "speechRecognitionPermission": "iChat turns voice messages into text on your iPhone when you tap Transcribe."
+        }
+      ]
     ],
     "extra": {
       "pushWorkerUrl": "https://ichat-push.tunlin-tlin-ac2.workers.dev",

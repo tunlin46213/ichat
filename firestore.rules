@@ -162,6 +162,15 @@ service cloud.firestore {
                 && d.lng is number && d.lng >= -180 && d.lng <= 180);
         }
 
+        // A scheduled message carries its send time as createdAt (within 30 days).
+        function validSchedule() {
+          let d = request.resource.data;
+          return !d.get('scheduled', false)
+            || (d.createdAt is timestamp
+                && d.createdAt > request.time
+                && d.createdAt < request.time + duration.value(30, 'd'));
+        }
+
         allow read: if signedIn() && request.auth.uid in chatMembers();
 
         // Sender must be me, and the other person must not have blocked me.
@@ -169,7 +178,14 @@ service cloud.firestore {
           && request.auth.uid in chatMembers()
           && request.resource.data.senderId == request.auth.uid
           && validBody()
+          && validSchedule()
           && !blockedBy(otherMember());
+
+        // Only a scheduled message, by its sender, before its send time ("Cancel").
+        allow delete: if signedIn()
+          && resource.data.senderId == request.auth.uid
+          && resource.data.get('scheduled', false) == true
+          && resource.data.createdAt > request.time;
 
         allow update: if signedIn() && request.auth.uid in chatMembers() && (
           // Reactions: each person may only add/change/remove their own.

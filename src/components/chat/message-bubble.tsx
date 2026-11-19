@@ -93,6 +93,7 @@ export function MessageBubble({
   starred,
   read = false,
   avatar,
+  scheduledFor = null,
   highlighted,
   onLongPress,
   onReply,
@@ -116,6 +117,8 @@ export function MessageBubble({
   starred?: boolean;
   /** mine and the other person has read it (✓✓) */
   read?: boolean;
+  /** "Tomorrow 9:00 AM" while my scheduled message waits to go out */
+  scheduledFor?: string | null;
   /** their photo, shown beside the last bubble of each run of their messages */
   avatar?: { id: string; name: string; uri?: string | null };
   /** briefly outlined after jumping to it from search or the pinned bar */
@@ -137,7 +140,14 @@ export function MessageBubble({
   const { bubbleColor, textScale } = useAppearance();
   const type = message.type ?? 'text';
   const meta = (
-    <BubbleMeta message={message} mine={mine} read={read} starred={!!starred} overlay={false} />
+    <BubbleMeta
+      message={message}
+      mine={mine}
+      read={read}
+      starred={!!starred}
+      overlay={false}
+      scheduledFor={scheduledFor}
+    />
   );
   const { emojis, count } = summarize(message.reactions);
   const hasReactions = count > 0;
@@ -291,12 +301,14 @@ export function MessageBubble({
                 onOpen={() => onOpenImage(message)}
               />
             ) : type === 'location' ? (
-              <LocationContent message={message} mine={mine} />
+              <LocationContent message={message} mine={mine} onLongPress={longPress} />
             ) : (
               <View
                 style={[
                   styles.bubble,
                   { backgroundColor: mine ? bubbleColor : theme.bubbleIncoming },
+                  // Waiting to be sent: faded with a dashed outline.
+                  scheduledFor ? styles.scheduled : null,
                 ]}>
                 {tail ? <BubbleTail side={mine ? 'right' : 'left'} color={mine ? bubbleColor : theme.bubbleIncoming} /> : null}
                 {message.replyTo ? (
@@ -359,7 +371,8 @@ export function MessageBubble({
               </View>
             )}
             {type === 'image' || type === 'location' ? (
-              <View style={styles.overlayMeta} pointerEvents="none">
+              // Live location bubbles have a Stop button at the bottom: time goes on the map.
+              <View style={message.liveUntil ? styles.overlayMetaTop : styles.overlayMeta} pointerEvents="none">
                 <BubbleMeta message={message} mine={mine} read={read} starred={!!starred} overlay />
               </View>
             ) : null}
@@ -417,12 +430,13 @@ function BubbleTail({ side, color }: { side: 'left' | 'right'; color: string }) 
  * "edited ★ 3:05 PM ✓✓" inside the bubble. Mine: a clock while sending, ✓ once on the
  * server, ✓✓ once they've read it. `overlay` = on top of a photo / map.
  */
-function BubbleMeta({ message, mine, read, starred, overlay }: {
+function BubbleMeta({ message, mine, read, starred, overlay, scheduledFor = null }: {
   message: Message;
   mine: boolean;
   read: boolean;
   starred: boolean;
   overlay: boolean;
+  scheduledFor?: string | null;
 }) {
   const theme = useTheme();
   const color = overlay ? '#fff' : mine ? 'rgba(255,255,255,0.78)' : theme.textSecondary;
@@ -431,6 +445,14 @@ function BubbleMeta({ message, mine, read, starred, overlay }: {
     .filter(Boolean)
     .join(' ');
   const status = message.pending ? 'Sending' : read ? 'Read' : 'Sent';
+  if (scheduledFor) {
+    return (
+      <View style={styles.meta} accessible accessibilityLabel={`Scheduled for ${scheduledFor}`}>
+        <Icon name="clock" size={10} color={color} fallback="🕓" />
+        <Text style={[styles.metaText, { color }]}>Scheduled · {scheduledFor}</Text>
+      </View>
+    );
+  }
   return (
     <View
       style={[styles.meta, overlay && styles.metaPill]}
@@ -457,6 +479,7 @@ function BubbleMeta({ message, mine, read, starred, overlay }: {
 }
 
 const styles = StyleSheet.create({
+  scheduled: { opacity: 0.7, borderWidth: 1.5, borderStyle: 'dashed', borderColor: 'rgba(255,255,255,0.8)' },
   tailRight: { position: 'absolute', right: -5, bottom: 0 },
   tailLeft: { position: 'absolute', left: -5, bottom: 0 },
   avatarSlot: { width: 28, marginRight: 6, alignSelf: 'flex-end' },
@@ -480,6 +503,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.45)',
   },
   overlayMeta: { position: 'absolute', right: 8, bottom: 8 },
+  overlayMetaTop: { position: 'absolute', right: 8, top: 8 },
   metaText: { fontSize: 11, fontWeight: '500', fontVariant: ['tabular-nums'] },
   ticks: { flexDirection: 'row', alignItems: 'center' },
   secondTick: { marginLeft: -6 },

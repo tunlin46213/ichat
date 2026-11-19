@@ -4,8 +4,18 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Icon } from '@/components/icon';
+import { toast } from '@/components/toast';
 import { useTheme } from '@/hooks/use-theme';
+import { haptics } from '@/lib/haptics';
 import { loadMediaUri } from '@/lib/media';
+import {
+  cachedTranscript,
+  canTranscribe,
+  TRANSCRIBE_LANGS,
+  transcribe,
+  transcribeErrorMessage,
+  type TranscribeLang,
+} from '@/lib/transcribe';
 
 /** Loads a stored photo / voice note (cached after the first load). */
 export function useMediaUri(chatId: string, mediaId: string, mime: string) {
@@ -151,6 +161,39 @@ export function AudioContent({ chatId, mediaId, mime, durationMs, waveform, mine
       });
   }
 
+  // ── Voice → text ──
+  const [tx, setTx] = useState<{ lang: TranscribeLang; text: string | null } | null>(null);
+  useEffect(() => {
+    if (!canTranscribe) return;
+    let active = true;
+    // Show a transcript made earlier on this phone straight away.
+    (async () => {
+      for (const l of TRANSCRIBE_LANGS) {
+        const text = await cachedTranscript(mediaId, l.id);
+        if (text !== null) {
+          if (active) setTx({ lang: l.id, text });
+          return;
+        }
+      }
+    })().catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [mediaId]);
+
+  function runTranscribe(lang: TranscribeLang) {
+    if (!uri) return;
+    haptics.light();
+    setTx({ lang, text: null });
+    transcribe(mediaId, uri, lang).then(
+      (text) => setTx({ lang, text }),
+      (err) => {
+        setTx(null);
+        toast.error(transcribeErrorMessage(err));
+      }
+    );
+  }
+
   function cycleSpeed() {
     const next = SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length];
     setSpeed(next);
@@ -158,6 +201,7 @@ export function AudioContent({ chatId, mediaId, mime, durationMs, waveform, mine
   }
 
   return (
+    <View>
     <View style={styles.audio}>
       <Pressable
         onPress={toggle}
@@ -186,6 +230,7 @@ export function AudioContent({ chatId, mediaId, mime, durationMs, waveform, mine
         <Text style={[styles.time, { color: fg }]}>
           {formatDuration(status.playing || status.currentTime > 0 ? status.currentTime : total)}
         </Text>
+        <View style={styles.sideButtons}>
         <Pressable
           onPress={cycleSpeed}
           hitSlop={8}
@@ -194,12 +239,60 @@ export function AudioContent({ chatId, mediaId, mime, durationMs, waveform, mine
           style={[styles.speed, { backgroundColor: mine ? 'rgba(255,255,255,0.22)' : theme.backgroundSelected }]}>
           <Text style={[styles.speedText, { color: fg }]}>{speed}×</Text>
         </Pressable>
+        {canTranscribe && !tx ? (
+          <Pressable
+            onPress={() => runTranscribe('en-US')}
+            onLongPress={() => runTranscribe('my-MM')}
+            disabled={!uri}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Transcribe voice message"
+            accessibilityHint="Long press to transcribe in Burmese"
+            style={[styles.speed, { backgroundColor: mine ? 'rgba(255,255,255,0.22)' : theme.backgroundSelected }]}>
+            <Text style={[styles.speedText, { color: fg }]}>Aa</Text>
+          </Pressable>
+        ) : null}
+        </View>
       </View>
+    </View>
+    {tx ? (
+      <View style={[styles.transcript, { borderTopColor: mine ? 'rgba(255,255,255,0.25)' : theme.separator }]}>
+        {tx.text === null ? (
+          <View style={styles.transcriptRow}>
+            <ActivityIndicator size="small" color={fg} />
+            <Text style={[styles.transcriptHint, { color: dim }]}>Transcribing…</Text>
+          </View>
+        ) : (
+          <Text selectable style={[styles.transcriptText, { color: fg }]}>
+            {tx.text || 'No speech detected.'}
+          </Text>
+        )}
+        {tx.text !== null ? (
+          <View style={styles.transcriptRow}>
+            {TRANSCRIBE_LANGS.map((l) => (
+              <Pressable
+                key={l.id}
+                onPress={() => l.id !== tx.lang && runTranscribe(l.id)}
+                hitSlop={6}
+                accessibilityRole="button"
+                accessibilityState={{ selected: l.id === tx.lang }}>
+                <Text style={[styles.langChip, { color: l.id === tx.lang ? fg : dim }]}>{l.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+      </View>
+    ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  transcript: { marginTop: 8, paddingTop: 6, borderTopWidth: StyleSheet.hairlineWidth, gap: 4, maxWidth: 230 },
+  transcriptRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  transcriptText: { fontSize: 15, lineHeight: 20 },
+  transcriptHint: { fontSize: 13, fontStyle: 'italic' },
+  langChip: { fontSize: 12, fontWeight: '700' },
   placeholder: { borderRadius: 16, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   failed: { color: '#fff', fontWeight: '700' },
   audio: { flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 210 },
@@ -207,6 +300,7 @@ const styles = StyleSheet.create({
   wave: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 2, height: 28 },
   bar: { width: 3, borderRadius: 2 },
   side: { alignItems: 'flex-end', gap: 3 },
+  sideButtons: { flexDirection: 'row', gap: 4 },
   time: { fontSize: 13, fontVariant: ['tabular-nums'], minWidth: 34, textAlign: 'right' },
   speed: { borderRadius: 8, paddingHorizontal: 5, paddingVertical: 1 },
   speedText: { fontSize: 11, fontWeight: '700', fontVariant: ['tabular-nums'] },
