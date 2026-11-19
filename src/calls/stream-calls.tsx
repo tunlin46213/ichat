@@ -12,11 +12,12 @@ import { StyleSheet, View } from 'react-native';
 
 import { useAuth } from '@/context/auth';
 import { chatIdFor, sendCallMessage } from '@/lib/chat';
-import { fetchStreamToken } from '@/lib/notify';
+import { fetchStreamToken, notifyCall } from '@/lib/notify';
 import { streamApiKey } from '@/lib/runtime';
 
 import { CallPill, CallScreen } from './call-screen';
 import { CallsContext } from './context';
+import { clearPendingCall, onPendingCall } from './pending';
 
 // Issued by the Cloudflare worker (worker/src/index.ts → /stream-token).
 const tokenProvider = fetchStreamToken;
@@ -100,7 +101,30 @@ export function StreamCallsProvider({ children }: { children: ReactNode }) {
       data: { members: [{ user_id: uid }, { user_id: other.id }], custom: { video } },
     });
     logCallWhenOver(call, uid, other.id, video);
+    // Their app may be closed: ring their phone through Bark too.
+    notifyCall(chatIdFor(uid, other.id), call.cid, video);
   }
+
+  // Opened from a Bark call notification: load that call so it rings here.
+  useEffect(() => {
+    if (!client) return;
+    return onPendingCall((cid) => {
+      client
+        .onRingingCall(cid)
+        .then(async (call) => {
+          // Too late: the caller hung up, or it's long past ringing. Don't show it.
+          // (Ringing gives up after ~30 s; the caller cancelling shows up in rejected_by.)
+          const stale = Date.now() - call.state.createdAt.getTime() > 45_000;
+          const callerId = call.state.createdBy?.id;
+          const cancelled = !!callerId && !!call.state.session?.rejected_by?.[callerId];
+          if (call.state.endedAt || stale || cancelled || call.state.callingState !== CallingState.RINGING) {
+            await call.leave().catch(() => {});
+          }
+        })
+        .catch((err) => console.warn('Could not load the call', err))
+        .finally(() => clearPendingCall(cid));
+    });
+  }, [client]);
 
   // `children` (the whole app) always sits at the same place in the tree. Wrapping it in
   // <StreamVideo> only once the client existed changed its parent, which remounted every

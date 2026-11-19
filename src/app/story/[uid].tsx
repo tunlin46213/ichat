@@ -332,7 +332,7 @@ export default function StoryViewerScreen() {
 
           {/* Bottom: caption, then reply or views */}
           <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            behavior={Platform.OS === 'web' ? undefined : 'padding'}
             style={styles.bottomWrap}
             pointerEvents="box-none">
             {current.kind === 'photo' && current.text ? (

@@ -16,6 +16,7 @@ import { createContext, use, useEffect, useState, type ReactNode } from 'react';
 import { AppState } from 'react-native';
 
 import { auth, db } from '@/lib/firebase';
+import { saveBark } from '@/lib/notify';
 import { registerForPush, unregisterPush } from '@/lib/push';
 
 const HEARTBEAT_MS = 60_000;
@@ -86,14 +87,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!uid) return;
     // Ask for notification permission and save this device's push token.
     registerForPush(uid);
+    // `inApp` tells the push worker to skip Bark notifications while I'm looking at iChat
+    // (the in-app banner covers that). The worker also ignores it once lastSeen is stale.
     const beat = () => {
       if (AppState.currentState !== 'active') return;
-      setDoc(doc(db, 'users', uid), { lastSeen: serverTimestamp() }, { merge: true }).catch(
+      setDoc(doc(db, 'users', uid), { lastSeen: serverTimestamp(), inApp: true }, { merge: true }).catch(
         () => {}
       );
     };
     const timer = setInterval(beat, HEARTBEAT_MS);
     const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'background') {
+        setDoc(doc(db, 'users', uid), { inApp: false }, { merge: true }).catch(() => {});
+        return;
+      }
       if (state !== 'active') return;
       beat();
       // Picks up email verification done in the mail app while we were away.
@@ -145,7 +152,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function logout() {
     setNeedsOnboarding(false);
-    if (auth.currentUser) await unregisterPush(auth.currentUser.uid);
+    if (auth.currentUser) {
+      await unregisterPush(auth.currentUser.uid);
+      // This phone shouldn't keep getting Bark alerts for an account that left it.
+      await saveBark({ key: null }).catch(() => {});
+    }
     await signOut(auth);
   }
 

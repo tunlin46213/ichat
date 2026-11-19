@@ -47,6 +47,7 @@ const SF_TO_IONICONS: Record<string, IoniconName> = {
   'stop.fill': 'stop',
   plus: 'add',
   'bell.fill': 'notifications',
+  'bell.badge.fill': 'notifications',
   'phone.down.fill': 'call',
   'mic.slash.fill': 'mic-off',
   'speaker.wave.2.fill': 'volume-high',

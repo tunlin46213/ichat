@@ -22,6 +22,7 @@ import Animated, { FadeIn, FadeOut, ZoomIn, ZoomOut } from 'react-native-reanima
 import { ActionSheet, afterModalClose } from '@/components/action-sheet';
 import { Avatar, colorsFor } from '@/components/avatar';
 import { useCalls } from '@/calls/context';
+import { ringPendingCall } from '@/calls/pending';
 import { OfflineBanner } from '@/components/banners';
 import { ChatHeaderTitle } from '@/components/chat/chat-header-title';
 import { Composer } from '@/components/chat/composer';
@@ -132,7 +133,17 @@ export default function ChatRoute() {
 }
 
 function ChatScreen() {
-  const { id, otherId, name } = useLocalSearchParams<{ id: string; otherId: string; name: string }>();
+  const { id, otherId, name, call: ringingCall } = useLocalSearchParams<{
+    id: string;
+    otherId: string;
+    name: string;
+    /** set when opened from a Bark call notification */
+    call?: string;
+  }>();
+  // Opened from "Bae is calling…": ring that call here (calls/pending.ts).
+  useEffect(() => {
+    if (ringingCall) ringPendingCall(ringingCall);
+  }, [ringingCall]);
   const { user, displayName } = useAuth();
   const theme = useTheme();
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
@@ -673,7 +684,7 @@ function ChatScreen() {
         { backgroundColor: theme.background, paddingTop: headerHeight },
         background ? { backgroundImage: background } : null,
       ]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'web' ? undefined : 'padding'}
       keyboardVerticalOffset={0}>
       <Stack.Screen
         options={{

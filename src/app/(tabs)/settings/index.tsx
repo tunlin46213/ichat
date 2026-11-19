@@ -12,6 +12,7 @@ import {
   View,
 } from 'react-native';
 
+import { showPrompt } from '@/components/prompt';
 import { toast } from '@/components/toast';
 import { ActionSheet } from '@/components/action-sheet';
 import { Avatar } from '@/components/avatar';
@@ -38,6 +39,11 @@ function promptText(opts: {
   confirmLabel: string;
   onSubmit: (value: string) => void;
 }) {
+  if (Platform.OS === 'android') {
+    // No Alert.prompt on Android.
+    showPrompt(opts);
+    return;
+  }
   if (Platform.OS === 'web') {
     const value = window.prompt(`${opts.title}\n\n${opts.message}`, opts.defaultValue ?? '');
     if (value != null) opts.onSubmit(value);
@@ -230,6 +236,17 @@ export default function SettingsScreen() {
           onPress={() => router.push('/settings/starred' as Href)}
         />
       </Section>
+
+      {Platform.OS === 'ios' ? (
+        <Section title="NOTIFICATIONS" footer="Get new messages and calls on your lock screen, even when iChat is closed.">
+          <Row
+            icon="bell.badge.fill"
+            iconBg="#FF3B30"
+            label="Lock-Screen Alerts"
+            onPress={() => router.push('/settings/notifications' as Href)}
+          />
+        </Section>
+      ) : null}
 
       {Platform.OS === 'web' ? (
         <Section

@@ -2,8 +2,15 @@
  * iChat push + call-token server on Cloudflare Workers (free plan, no card).
  * Replaces Firebase Cloud Functions so the Firebase project can stay on Spark.
  *
- *   POST /notify        { chatId, body }   → push the new message to the other member
- *   POST /stream-token                     → Stream Video user token (native calls)
+ *   POST /notify        { chatId, body, call? }  → push the new message / call to the other member
+ *   POST /stream-token                           → Stream Video user token (native calls)
+ *   POST /bark          { key, preview } | { key: null }  → save / remove my Bark device key
+ *   POST /bark-status                            → { enabled, preview }
+ *   POST /bark-test                              → test notification to my own phone
+ *
+ * Bark (free iOS app, https://bark.day.app) gives lock-screen notifications to a
+ * free-Apple-ID sideloaded iChat, which can't receive Apple push itself. Keys live in
+ * the BARK KV namespace, never in Firestore, so chat partners can't see them.
  *
  * Every request must carry the caller's Firebase ID token: `Authorization: Bearer …`.
  */
@@ -16,6 +23,8 @@ export interface Env {
   STREAM_API_SECRET?: string;
   /** Site that opens when a web notification is tapped, e.g. https://ichat-2a37f.web.app */
   APP_URL: string;
+  /** uid → Bark settings (wrangler.toml [[kv_namespaces]]). */
+  BARK?: KVNamespace;
 }
 
 const CORS = {
@@ -66,14 +75,16 @@ async function googleKeys() {
   return keys;
 }
 
-/** Returns the Firebase uid, or null if the token is missing/invalid/expired. */
-async function verifyIdToken(request: Request, projectId: string) {
+type Caller = { uid: string; name: string | null; token: string };
+
+/** Returns the caller (uid, display name, raw token), or null if the token is missing/invalid/expired. */
+async function verifyIdToken(request: Request, projectId: string): Promise<Caller | null> {
   const token = request.headers.get('Authorization')?.replace(/^Bearer /, '');
   if (!token) return null;
   const [h, p, sig] = token.split('.');
   if (!h || !p || !sig) return null;
   const header = decodeJson<{ alg: string; kid: string }>(h);
-  const payload = decodeJson<{ aud: string; iss: string; exp: number; sub: string }>(p);
+  const payload = decodeJson<{ aud: string; iss: string; exp: number; sub: string; name?: string }>(p);
   const now = Date.now() / 1000;
   if (
     header.alg !== 'RS256' ||
@@ -99,7 +110,7 @@ async function verifyIdToken(request: Request, projectId: string) {
     fromB64url(sig),
     enc.encode(`${h}.${p}`)
   );
-  return ok ? payload.sub : null;
+  return ok ? { uid: payload.sub, name: payload.name ?? null, token } : null;
 }
 
 // ─── Google access token from the service account ──────────────────────────
@@ -163,22 +174,99 @@ async function getDoc(env: Env, path: string): Promise<FsDoc | null> {
 
 const strings = (v?: FsValue) => v?.arrayValue?.values?.map((x) => x.stringValue ?? '') ?? [];
 
+// ─── Bark ──────────────────────────────────────────────────────────────────
+
+type BarkSettings = { key: string; preview: boolean };
+const BARK_KEY = /^[A-Za-z0-9]{10,64}$/;
+const ICON = 'https://raw.githubusercontent.com/tunlin46213/ichat/main/assets/images/icon.png';
+/** Previews the app writes itself (safe to show even with message text hidden). */
+const SAFE_PREVIEW = /^(📷 Photo|🎤 Voice message.*|📍 (Live location|Location)|📞 .*|📹 .*)$/u;
+
+async function barkSettings(env: Env, uid: string) {
+  if (!env.BARK) return null;
+  return env.BARK.get<BarkSettings>(`bark:${uid}`, 'json');
+}
+
+async function sendBark(
+  settings: BarkSettings,
+  msg: { title: string; body: string; url: string; group: string; call?: boolean }
+) {
+  return fetch('https://api.day.app/push', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify({
+      device_key: settings.key,
+      title: msg.title,
+      body: msg.body,
+      group: msg.group,
+      url: msg.url,
+      icon: ICON,
+      ...(msg.call
+        ? // Rings for ~30 s and breaks through Focus (if allowed in Bark's settings).
+          { call: '1', sound: 'multiwayinvitation', level: 'timeSensitive' }
+        : { sound: 'chime' }),
+    }),
+  });
+}
+
+/** Is the recipient looking at iChat right now? Then the in-app banner is enough. */
+async function isInApp(env: Env, caller: Caller, uid: string) {
+  const res = await fetch(
+    `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/users/${uid}?mask.fieldPaths=inApp&mask.fieldPaths=lastSeen`,
+    { headers: { Authorization: `Bearer ${caller.token}` } }
+  );
+  if (!res.ok) return false;
+  const doc = (await res.json()) as { fields?: { inApp?: { booleanValue?: boolean }; lastSeen?: { timestampValue?: string } } };
+  const seen = Date.parse(doc.fields?.lastSeen?.timestampValue ?? '') || 0;
+  // The heartbeat runs every 60 s while the app is open; older means it was closed.
+  return doc.fields?.inApp?.booleanValue === true && Date.now() - seen < 90_000;
+}
+
 // ─── /notify ───────────────────────────────────────────────────────────────
 
-async function notify(env: Env, senderId: string, chatId: string, body: string) {
-  // Without the service account we can't read Firestore or send pushes. Say so plainly
-  // instead of crashing in accessToken() with a 500 on every message.
-  if (!env.FIREBASE_SERVICE_ACCOUNT) return json({ sent: 0, reason: 'push not configured' });
-  const chat = await getDoc(env, `chats/${chatId}`);
-  const members = strings(chat?.fields?.members);
-  if (!members.includes(senderId)) return json({ error: 'not a member' }, 403);
-  const recipientId = members.find((m) => m !== senderId);
-  if (!recipientId) return json({ sent: 0 });
+type CallInfo = { cid: string; video: boolean };
 
+async function notify(env: Env, caller: Caller, chatId: string, body: string, call: CallInfo | null) {
+  const senderId = caller.uid;
+  // 1:1 chat ids are the two uids sorted and joined with "_".
+  const members = chatId.split('_');
+  if (members.length !== 2 || !members.includes(senderId)) return json({ error: 'not a member' }, 403);
+  const recipientId = members.find((m) => m !== senderId) ?? '';
+  if (!recipientId || recipientId === senderId) return json({ sent: 0 });
+
+  const name = caller.name?.trim() || 'iChat';
+  const link =
+    `ichat://chat/${chatId}?otherId=${encodeURIComponent(senderId)}&name=${encodeURIComponent(name)}` +
+    (call ? `&call=${encodeURIComponent(call.cid)}` : '');
+
+  const jobs: Promise<Response>[] = [];
+
+  // Native iPhone app (free Apple ID): Bark.
+  const bark = await barkSettings(env, recipientId);
+  // With iChat open, its own banner / incoming-call screen shows it already.
+  if (bark && !(await isInApp(env, caller, recipientId))) {
+    const text = call
+      ? call.video
+        ? 'Incoming video call… tap to answer'
+        : 'Incoming voice call… tap to answer'
+      : bark.preview || SAFE_PREVIEW.test(body)
+        ? body.slice(0, 180)
+        : 'New message';
+    jobs.push(sendBark(bark, { title: name, body: text, url: link, group: chatId, call: !!call }));
+  }
+
+  // Web push (FCM) and Expo push need the service account (not set up on the free path).
+  if (env.FIREBASE_SERVICE_ACCOUNT && !call) jobs.push(...(await legacyPush(env, senderId, recipientId, chatId, body)));
+
+  const results = await Promise.allSettled(jobs);
+  return json({ sent: results.filter((r) => r.status === 'fulfilled' && r.value.ok).length });
+}
+
+async function legacyPush(env: Env, senderId: string, recipientId: string, chatId: string, body: string) {
   // Respect blocks: no notifications from people the recipient blocked.
   const blocks = await getDoc(env, `blocks/${recipientId}`);
-  if (strings(blocks?.fields?.blocked).includes(senderId)) return json({ sent: 0 });
-
+  if (strings(blocks?.fields?.blocked).includes(senderId)) return [];
+  const chat = await getDoc(env, `chats/${chatId}`);
   const push = await getDoc(env, `users/${recipientId}/private/push`);
   const fcmTokens = strings(push?.fields?.fcmTokens);
   const expoTokens = strings(push?.fields?.tokens);
@@ -187,7 +275,6 @@ async function notify(env: Env, senderId: string, chatId: string, body: string) 
   const text = body.slice(0, 180);
   const data = { chatId, otherId: senderId, name };
   const link = `${env.APP_URL}/chat/${chatId}?otherId=${encodeURIComponent(senderId)}&name=${encodeURIComponent(name)}`;
-
   const jobs: Promise<Response>[] = [];
 
   // Web (PWA on iPhone home screen / desktop browsers) via FCM.
@@ -222,9 +309,35 @@ async function notify(env: Env, senderId: string, chatId: string, body: string) 
       })
     );
   }
+  return jobs;
+}
 
-  const results = await Promise.allSettled(jobs);
-  return json({ sent: results.filter((r) => r.status === 'fulfilled' && r.value.ok).length });
+// ─── /bark, /bark-status, /bark-test ───────────────────────────────────────
+
+async function saveBark(env: Env, uid: string, input: { key?: string | null; preview?: boolean }) {
+  if (!env.BARK) return json({ error: 'bark not configured' }, 501);
+  if (input.key === null) {
+    await env.BARK.delete(`bark:${uid}`);
+    return json({ enabled: false });
+  }
+  const current = await barkSettings(env, uid);
+  const key = input.key ?? current?.key;
+  if (!key || !BARK_KEY.test(key)) return json({ error: 'bad key' }, 400);
+  const settings: BarkSettings = { key, preview: input.preview ?? current?.preview ?? false };
+  await env.BARK.put(`bark:${uid}`, JSON.stringify(settings));
+  return json({ enabled: true, preview: settings.preview });
+}
+
+async function testBark(env: Env, uid: string) {
+  const bark = await barkSettings(env, uid);
+  if (!bark) return json({ error: 'not set up' }, 404);
+  const res = await sendBark(bark, {
+    title: 'iChat',
+    body: 'Notifications are working 🎉',
+    url: 'ichat://chats',
+    group: 'ichat-test',
+  });
+  return json({ ok: res.ok }, res.ok ? 200 : 502);
 }
 
 // ─── /stream-token ─────────────────────────────────────────────────────────
@@ -250,17 +363,28 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
     if (request.method !== 'POST') return json({ error: 'not found' }, 404);
 
-    const uid = await verifyIdToken(request, env.FIREBASE_PROJECT_ID);
-    if (!uid) return json({ error: 'unauthenticated' }, 401);
+    const caller = await verifyIdToken(request, env.FIREBASE_PROJECT_ID);
+    if (!caller) return json({ error: 'unauthenticated' }, 401);
+    const { uid } = caller;
 
     const { pathname } = new URL(request.url);
     try {
       if (pathname === '/notify') {
-        const { chatId, body } = (await request.json()) as { chatId?: string; body?: string };
+        const { chatId, body, call } = (await request.json()) as { chatId?: string; body?: string; call?: CallInfo };
         if (!chatId || typeof body !== 'string') return json({ error: 'bad request' }, 400);
-        return await notify(env, uid, chatId, body);
+        const callInfo =
+          call && typeof call.cid === 'string' && /^default:[A-Za-z0-9_-]{1,64}$/.test(call.cid)
+            ? { cid: call.cid, video: !!call.video }
+            : null;
+        return await notify(env, caller, chatId, body, callInfo);
       }
       if (pathname === '/stream-token') return await streamToken(env, uid);
+      if (pathname === '/bark') return await saveBark(env, uid, (await request.json()) as { key?: string | null; preview?: boolean });
+      if (pathname === '/bark-status') {
+        const bark = await barkSettings(env, uid);
+        return json({ available: !!env.BARK, enabled: !!bark, preview: bark?.preview ?? false });
+      }
+      if (pathname === '/bark-test') return await testBark(env, uid);
     } catch (err) {
       console.error(err);
       return json({ error: 'internal' }, 500);

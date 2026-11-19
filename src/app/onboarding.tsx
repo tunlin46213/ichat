@@ -115,7 +115,7 @@ export default function OnboardingScreen() {
   return (
     <View style={[styles.flex, { backgroundColor: theme.background, backgroundImage: BACKDROP[scheme] }]}>
       <SafeAreaView style={styles.flex}>
-        <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'web' ? undefined : 'padding'}>
           <View style={styles.top}>
             <View style={styles.dots}>
               {Array.from({ length: STEPS }, (_, i) => (

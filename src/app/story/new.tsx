@@ -80,7 +80,7 @@ export default function NewStoryScreen() {
 
   return (
     <View style={[styles.fill, isText ? { backgroundImage: backgroundCss(background) } : styles.black]}>
-      <KeyboardAvoidingView style={styles.fill} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={styles.fill} behavior={Platform.OS === 'web' ? undefined : 'padding'}>
         <View style={[styles.top, { paddingTop: insets.top + 8 }]}>
           <Pressable onPress={close} hitSlop={10} accessibilityLabel="Cancel" style={styles.round}>
             <Icon name="xmark" size={18} color="#fff" fallback="✕" />

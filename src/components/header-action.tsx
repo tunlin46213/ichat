@@ -18,15 +18,17 @@ export type HeaderButton = {
 
 /**
  * One or more header buttons on one side. On iOS they are native toolbar items
- * (SF Symbols, Liquid Glass on iOS 26); Stack.Toolbar is not available on web, so
- * there they are drawn as plain buttons.
+ * (SF Symbols, Liquid Glass on iOS 26). On web and Android they are drawn as plain
+ * buttons.
  */
 export function HeaderActions({ placement, buttons }: {
   placement: 'left' | 'right';
   buttons: HeaderButton[];
 }) {
   const theme = useTheme();
-  if (Platform.OS === 'web') {
+  // Native toolbar items take SF Symbol names, which only iOS can draw. Web and Android
+  // get plain header buttons with the matching Ionicons (icon.web / icon.android).
+  if (Platform.OS !== 'ios') {
     const render = () => (
       <View style={styles.webRow}>
         {buttons.map((b) => (

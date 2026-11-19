@@ -8,6 +8,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { CallsProvider } from '@/calls/calls-provider';
 import { ConnectingScreen } from '@/components/connecting-screen';
 import { InAppBanner } from '@/components/in-app-banner';
+import { PromptHost } from '@/components/prompt';
 import { ToastHost } from '@/components/toast';
 import { PhoneFrame } from '@/components/phone-frame';
 import { Colors } from '@/constants/theme';
@@ -155,6 +156,7 @@ export default function RootLayout() {
                       <RootNavigator />
                       <SignedInOverlays />
                       <ToastHost />
+                      <PromptHost />
                     </PhoneFrame>
                   </CallsProvider>
                 </StoriesProvider>

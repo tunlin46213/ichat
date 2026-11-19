@@ -103,7 +103,7 @@ export function CountdownSheet({ chatId, myUid, countdowns, startAdding, onClose
       {/* The name field opens the keyboard right away: lift the sheet above it, or the
           date chips and the Add button end up hidden behind the keyboard. */}
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'web' ? undefined : 'padding'}
         style={styles.kav}
         pointerEvents="box-none">
       <Animated.View
