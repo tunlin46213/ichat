@@ -1,6 +1,16 @@
 import { useState } from 'react';
-import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import Animated, { FadeIn, FadeInDown, SlideInDown } from 'react-native-reanimated';
+import {
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/icon';
@@ -90,8 +100,14 @@ export function CountdownSheet({ chatId, myUid, countdowns, startAdding, onClose
       <Animated.View entering={FadeIn.duration(150)} style={StyleSheet.absoluteFill}>
         <Pressable style={[StyleSheet.absoluteFill, styles.backdrop]} onPress={onClose} accessibilityLabel="Close" />
       </Animated.View>
+      {/* The name field opens the keyboard right away: lift the sheet above it, or the
+          date chips and the Add button end up hidden behind the keyboard. */}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.kav}
+        pointerEvents="box-none">
       <Animated.View
-        entering={SlideInDown.springify().damping(20)}
+        entering={FadeIn.duration(180)}
         style={[styles.sheet, { backgroundColor: theme.card, paddingBottom: Math.max(insets.bottom, 16) }]}>
         <View style={[styles.grabber, { backgroundColor: theme.separator }]} />
         <View style={styles.titleRow}>
@@ -114,7 +130,11 @@ export function CountdownSheet({ chatId, myUid, countdowns, startAdding, onClose
               maxLength={60}
               style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
             />
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
+            <ScrollView
+              horizontal
+              keyboardShouldPersistTaps="handled"
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.chips}>
               {EMOJIS.map((e) => (
                 <Pressable
                   key={e}
@@ -128,7 +148,11 @@ export function CountdownSheet({ chatId, myUid, countdowns, startAdding, onClose
                 </Pressable>
               ))}
             </ScrollView>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
+            <ScrollView
+              horizontal
+              keyboardShouldPersistTaps="handled"
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.chips}>
               {Array.from({ length: DAYS_AHEAD }, (_, i) => {
                 const d = dayAt(i + 1);
                 const selected = day === i + 1;
@@ -196,6 +220,7 @@ export function CountdownSheet({ chatId, myUid, countdowns, startAdding, onClose
           </ScrollView>
         )}
       </Animated.View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -219,11 +244,8 @@ const styles = StyleSheet.create({
   barDays: { fontSize: 12, fontWeight: '800', fontVariant: ['tabular-nums'] },
   more: { fontSize: 12, fontWeight: '600' },
   backdrop: { backgroundColor: 'rgba(0,0,0,0.4)' },
+  kav: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'flex-end' },
   sheet: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     paddingHorizontal: 16,

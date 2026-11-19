@@ -102,7 +102,7 @@ export function ChatsProvider({ children }: { children: ReactNode }) {
     const check = () => {
       const now = Date.now();
       for (const chat of chatsRef.current ?? []) {
-        const due = Object.values(chat.scheduled ?? {}).some((s) => s && s.at.toMillis() <= now);
+        const due = Object.values(chat.scheduled ?? {}).some((s) => !!s?.at && s.at.toMillis() <= now);
         if (!due || busy.has(chat.id)) continue;
         busy.add(chat.id);
         deliverDueScheduled(chat, now)

@@ -1,6 +1,6 @@
 import { createContext, use } from 'react';
 import { Modal, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
-import Animated, { FadeIn, FadeInDown, SlideInDown } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colorsFor } from '@/components/avatar';
@@ -178,7 +178,7 @@ export function LiveMapSheet({ chat, myUid, nameOf, onClose }: {
         <Pressable style={[StyleSheet.absoluteFill, styles.backdrop]} onPress={onClose} accessibilityLabel="Close" />
       </Animated.View>
       <Animated.View
-        entering={SlideInDown.springify().damping(20)}
+        entering={FadeIn.duration(180)}
         style={[styles.sheet, { backgroundColor: theme.card, paddingBottom: Math.max(insets.bottom, 16) }]}>
         <View style={[styles.grabber, { backgroundColor: theme.separator }]} />
         <Text style={[styles.sheetTitle, { color: theme.text }]}>Live location</Text>

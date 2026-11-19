@@ -598,7 +598,7 @@ export function isScheduledPending(message: Message, now: number) {
  * both phones at once: a transaction makes sure each one is delivered only once.
  */
 export async function deliverDueScheduled(chat: Chat, now = Date.now()) {
-  const due = Object.entries(chat.scheduled ?? {}).filter(([, s]) => s && s.at.toMillis() <= now);
+  const due = Object.entries(chat.scheduled ?? {}).filter(([, s]) => !!s?.at && s.at.toMillis() <= now);
   for (const [id] of due) {
     await runTransaction(db, async (tx) => {
       const snap = await tx.get(chatRef(chat.id));
@@ -651,8 +651,9 @@ export function formatCountdown(days: number) {
 /** Countdowns not more than a day past, soonest first. */
 export function upcomingCountdowns(chat: Pick<Chat, 'countdowns'> | null | undefined, now: number) {
   return Object.entries(chat?.countdowns ?? {})
-    .filter((e): e is [string, Countdown] => !!e[1])
+    .filter((e): e is [string, Countdown] => !!e[1]?.at)
     .map(([id, c]) => ({ id, ...c, days: daysUntil(c.at, now) }))
     .filter((c) => c.days >= -1)
-    .sort((a, b) => a.at.toMillis() - b.at.toMillis());
+    // Upcoming ones first (soonest on top); yesterday's comes last instead of hiding them.
+    .sort((a, b) => (a.days < 0 ? 1 : 0) - (b.days < 0 ? 1 : 0) || a.at.toMillis() - b.at.toMillis());
 }

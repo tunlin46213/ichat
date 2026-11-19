@@ -19,7 +19,6 @@ import Animated, {
   cancelAnimation,
   FadeIn,
   FadeOut,
-  SlideInDown,
   useAnimatedStyle,
   useSharedValue,
   Easing,
@@ -540,7 +539,7 @@ function ViewersSheet({ story, viewerIds, bottomInset, onClose }: {
         <Pressable style={[StyleSheet.absoluteFill, styles.scrim]} onPress={onClose} accessibilityLabel="Close" />
       </Animated.View>
       <Animated.View
-        entering={SlideInDown.springify().damping(20)}
+        entering={FadeIn.duration(180)}
         style={[styles.sheet, { paddingBottom: bottomInset + 16 }]}>
         <View style={styles.grabber} />
         <Text style={styles.sheetTitle}>

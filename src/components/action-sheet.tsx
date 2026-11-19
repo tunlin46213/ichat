@@ -1,5 +1,5 @@
 import { Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import Animated, { FadeIn, SlideInDown } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon, type IconName } from '@/components/icon';
@@ -36,7 +36,7 @@ export function ActionSheet({ visible, title, options, onClose }: {
         <Pressable style={[StyleSheet.absoluteFill, styles.backdrop]} onPress={onClose} accessibilityLabel="Close" />
       </Animated.View>
       <Animated.View
-        entering={SlideInDown.springify().damping(20)}
+        entering={FadeIn.duration(180)}
         style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 12) }]}>
         <View style={[styles.group, { backgroundColor: theme.card }]}>
           {title ? (

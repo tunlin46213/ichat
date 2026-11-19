@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import { useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import Animated, { FadeIn, FadeInDown, FadeOut, SlideInDown } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown, FadeOut } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useMediaUri } from '@/components/chat/media-content';
@@ -85,7 +85,7 @@ export function MemorySheet({ chatId, memory, nameOf, onClose }: {
         <Pressable style={[StyleSheet.absoluteFill, styles.backdrop]} onPress={onClose} accessibilityLabel="Close" />
       </Animated.View>
       <Animated.View
-        entering={SlideInDown.springify().damping(20)}
+        entering={FadeIn.duration(180)}
         style={[styles.sheet, { backgroundColor: theme.card, paddingBottom: Math.max(insets.bottom, 16) }]}>
         <View style={[styles.grabber, { backgroundColor: theme.separator }]} />
         <Text style={[styles.title, { color: theme.text }]}>✨ {memory.label}</Text>
