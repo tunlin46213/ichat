@@ -47,3 +47,7 @@ worker/node_modules/
 worker/.wrangler/
 .firebase/
 *-debug.log
+
+# Python
+__pycache__/
+*.pyc
