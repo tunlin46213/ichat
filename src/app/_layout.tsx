@@ -51,7 +51,12 @@ function RootNavigator() {
       if (!data?.chatId || !data.otherId) return;
       router.push({
         pathname: '/chat/[id]',
-        params: { id: data.chatId, otherId: data.otherId, name: data.name ?? '' },
+        params: {
+          id: data.chatId,
+          otherId: data.otherId,
+          name: data.name ?? '',
+          ...(data.call ? { call: data.call } : {}),
+        },
       });
     };
     Notifications.getLastNotificationResponseAsync().then((r) => r && open(r), () => {});

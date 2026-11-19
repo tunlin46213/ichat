@@ -241,10 +241,12 @@ async function notify(env: Env, caller: Caller, chatId: string, body: string, ca
 
   const jobs: Promise<Response>[] = [];
 
+  // With iChat open, its own banner / incoming-call screen shows it already.
+  const inApp = await isInApp(env, caller, recipientId);
+
   // Native iPhone app (free Apple ID): Bark.
   const bark = await barkSettings(env, recipientId);
-  // With iChat open, its own banner / incoming-call screen shows it already.
-  if (bark && !(await isInApp(env, caller, recipientId))) {
+  if (bark && !inApp) {
     const text = call
       ? call.video
         ? 'Incoming video call… tap to answer'
@@ -255,11 +257,63 @@ async function notify(env: Env, caller: Caller, chatId: string, body: string, ca
     jobs.push(sendBark(bark, { title: name, body: text, url: link, group: chatId, call: !!call }));
   }
 
+  // Android app: straight to the phone with Firebase Cloud Messaging (free).
+  if (env.FIREBASE_SERVICE_ACCOUNT && !inApp) {
+    jobs.push(...(await androidPush(env, { senderId, recipientId, chatId, name, body, call })));
+  }
+
   // Web push (FCM) and Expo push need the service account (not set up on the free path).
   if (env.FIREBASE_SERVICE_ACCOUNT && !call) jobs.push(...(await legacyPush(env, senderId, recipientId, chatId, body)));
 
   const results = await Promise.allSettled(jobs);
   return json({ sent: results.filter((r) => r.status === 'fulfilled' && r.value.ok).length });
+}
+
+async function androidPush(
+  env: Env,
+  msg: { senderId: string; recipientId: string; chatId: string; name: string; body: string; call: CallInfo | null }
+) {
+  const blocks = await getDoc(env, `blocks/${msg.recipientId}`);
+  if (strings(blocks?.fields?.blocked).includes(msg.senderId)) return [];
+  const push = await getDoc(env, `users/${msg.recipientId}/private/push`);
+  const tokens = strings(push?.fields?.androidTokens);
+  if (!tokens.length) return [];
+  const auth = `Bearer ${await accessToken(env)}`;
+  const { call } = msg;
+  const text = call
+    ? call.video
+      ? 'Incoming video call… tap to answer'
+      : 'Incoming voice call… tap to answer'
+    : msg.body.slice(0, 180);
+  // Read by the app when the alert is tapped (src/app/_layout.tsx → chat screen).
+  const data: Record<string, string> = { chatId: msg.chatId, otherId: msg.senderId, name: msg.name };
+  if (call) data.call = call.cid;
+  return tokens.map((token) =>
+    fetch(`https://fcm.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/messages:send`, {
+      method: 'POST',
+      headers: { Authorization: auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: {
+          token,
+          notification: { title: msg.name, body: text },
+          data,
+          android: {
+            priority: 'HIGH',
+            // A call alert is useless once it has stopped ringing.
+            ttl: call ? '40s' : '86400s',
+            notification: {
+              channel_id: call ? 'calls' : 'messages',
+              // One alert per chat: a newer message replaces the older one.
+              tag: call ? `call-${msg.chatId}` : msg.chatId,
+              sound: 'default',
+              notification_priority: call ? 'PRIORITY_MAX' : 'PRIORITY_HIGH',
+              visibility: call ? 'PUBLIC' : 'PRIVATE',
+            },
+          },
+        },
+      }),
+    })
+  );
 }
 
 async function legacyPush(env: Env, senderId: string, recipientId: string, chatId: string, body: string) {

@@ -47,7 +47,7 @@
 | Firebase console | https://console.firebase.google.com/project/ichat-2a37f | |
 | Firestore rules | https://console.firebase.google.com/project/ichat-2a37f/firestore/rules | [firestore.rules](firestore.rules) ကို paste → Publish |
 | GitHub Actions | https://github.com/tunlin46213/ichat/actions | `iOS sideload build` |
-| Cloudflare Worker | `https://ichat-push.tunlin-tlin-ac2.workers.dev` | name `ichat-push`, deployed ✅ |
+| Cloudflare Worker | `https://ichat-push.ichat-push-worker.workers.dev` | name `ichat-push`, account **layoungaway41@gmail.com** (2026-11-19 ကစ), KV `BARK` ✅. အဟောင်း `ichat-push.tunlin-tlin-ac2` (တခြား account, build ≤ #4 သုံး) |
 | Stream app | API key `uc5wwkmp728q` (public, app.json ထဲ) | dashboard.getstream.io |
 | Bundle ID | `com.tunlin.ichat` | |
 | Web URL (မ deploy ရသေး) | https://ichat-2a37f.web.app | |
@@ -55,8 +55,8 @@
 **Secrets (ဘယ်ဖိုင်ထဲမှမှ မထည့်ရ):**
 | Secret | သိမ်းထားတဲ့နေရာ | အခြေအနေ |
 |---|---|---|
-| `STREAM_API_SECRET` | Cloudflare Worker secret | ✅ ထည့်ပြီး — ⚠️ chat ထဲမှာ ပေါက်ခဲ့လို့ **rotate လုပ်ရန် ကျန်** |
-| `FIREBASE_SERVICE_ACCOUNT` | Cloudflare Worker secret | ❌ မထည့်ရသေး (web push အတွက်ပဲ လို) |
+| `STREAM_API_SECRET` | Cloudflare Worker secret | ❌ **worker အသစ်မှာ မထည့်ရသေး** — Stream dashboard မှာ rotate ပြီး `wrangler secret put` (မထည့်ရင် build အသစ်မှာ call မရ) |
+| `FIREBASE_SERVICE_ACCOUNT` | Cloudflare Worker secret | ✅ ထည့်ပြီး (2026-11-19; Android FCM + web push) |
 
 `app.json → expo.extra`: `pushWorkerUrl` ✅, `streamApiKey` ✅, `webPushVapidKey` ❌ (ဗလာ)
 
@@ -192,8 +192,9 @@ Rules အဓိကချက်: chat members ပဲ ဖတ်/ရေး; block �
 - [x] **Double-check (live location / memories, 2026-11-19):** location bubble ကို ဖိရင် menu မပေါ်တာ (အထဲ Pressable က touch ယူ → `onLongPress` ဆင့်ပို့; unsend/forward/react ရပြီ); live bubble မှာ အချိန် pill ကို map ပေါ်ညာဘက်ထိပ် (Stop ခလုတ်နဲ့ မထပ်); `live` entry မပြည့်စုံရင် crash မဖြစ်အောင် guard
 - [x] **Fix (2026-11-19, uncommitted):** countdown sheet — name field autoFocus keyboard က sheet တစ်ခုလုံးကို ဖုံး (ရက်/Add မမြင်) → `KeyboardAvoidingView` + chips `keyboardShouldPersistTaps`; bottom sheet အားလုံး (action/schedule/countdown/reactions/live map/memory/story) spring `SlideInDown` → ငြိမ်တဲ့ `FadeIn` 180ms (user: animation လှုပ်လွန်း)
 - [x] **Double-check (2026-11-19, uncommitted):** countdown bar မှာ မနေ့ကပြီးတဲ့ countdown ("Yesterday") က လာမယ့်ဟာကို ဖုံးနေ → upcoming အရင် sort; countdown/scheduled entry မပြည့်စုံရင် crash မဖြစ် guard; web export ကို headless Chromium နဲ့ run → JS error မရှိ
-- [ ] **Bark lock-screen alerts (2026-11-19, uncommitted; worker deploy ကျန်):** free Apple ID မှာ push မရလို့ **Bark** app (free) ကနေ message/call alert; Settings → Notifications → Lock-Screen Alerts (`settings/notifications.tsx`: Bark link paste → Connect → test alert, "Show message text" toggle default off, Turn Off); worker `/bark`, `/bark-status`, `/bark-test` + `/notify` က Bark ပို့ (KV `BARK` uid→{key, preview}; recipient = chatId split; ID token `name` = title; recipient `users.inApp` true + lastSeen <90s ဆို မပို့); call = `call:'1'` ~30s ring + `ichat://chat/…&call=default:id` → `calls/pending.ts` → `client.onRingingCall` (45s ကျော်/cancel/ended ဆို မပြ); presence `inApp` (background → false); logout ရင် Bark key ဖျက်. ⚠️ **wrangler က `layoungaway41@gmail.com` account ထဲ login ဖြစ်နေ** — app သုံးတဲ့ worker (`tunlin-tlin-ac2`) account နဲ့ ပြန် login → KV ပြန် create → `wrangler.toml` id ပြင် → deploy
+- [ ] **Bark lock-screen alerts (2026-11-19, uncommitted; worker deploy ကျန်):** free Apple ID မှာ push မရလို့ **Bark** app (free) ကနေ message/call alert; Settings → Notifications → Lock-Screen Alerts (`settings/notifications.tsx`: Bark link paste → Connect → test alert, "Show message text" toggle default off, Turn Off); worker `/bark`, `/bark-status`, `/bark-test` + `/notify` က Bark ပို့ (KV `BARK` uid→{key, preview}; recipient = chatId split; ID token `name` = title; recipient `users.inApp` true + lastSeen <90s ဆို မပို့); call = `call:'1'` ~30s ring + `ichat://chat/…&call=default:id` → `calls/pending.ts` → `client.onRingingCall` (45s ကျော်/cancel/ended ဆို မပြ); presence `inApp` (background → false); logout ရင် Bark key ဖျက်. ✅ worker ကို `layoungaway41` account မှာ deploy ပြီး, `app.json pushWorkerUrl` ပြောင်းပြီး
 - [ ] **Android APK (2026-11-19, uncommitted; build မစမ်းရသေး):** `.github/workflows/android-apk.yml` (ubuntu, Java 17, `expo prebuild --platform android` → `gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a`, debug key နဲ့ sign → artifact `iChat-apk`; iOS workflow မထိ); Android fixes: `icon.android.tsx` (Ionicons, SF Symbols မရ), `HeaderActions` iOS မဟုတ်ရင် plain buttons (Stack.Toolbar က SF icon ပဲ), `components/prompt.tsx` PromptHost (Android မှာ `Alert.prompt` မရှိ → edit name / delete account), KAV `padding` on Android too (edge-to-edge), Bark row iOS only. Android push = မရသေး (နောက်မှ FCM — Android က free)
+- [ ] **Android native push (2026-11-19, uncommitted; worker secret + deploy ကျန်):** `google-services.json` (public config) + `android.googleServicesFile`; `push.ts` Android → channels `messages` / `calls` + `getDevicePushTokenAsync` (FCM) → `users/{uid}/private/push.androidTokens[]` (Expo/EAS မလို); worker `androidPush()` FCM v1 (service account လို → `FIREBASE_SERVICE_ACCOUNT` secret), message = text ပါ, call = `calls` channel + `data.call` → tap ရင် `_layout` → chat `?call=` → ring; inApp ဆို မပို့; blocks စစ်; notification icon = monochrome
 - [ ] **Build #4 (`d544879`)** — UI v3 / stories / enterprise / aurora / smart pass အားလုံးပါ; `expo-blur` native module အသစ်ကြောင့် build အသစ်လို → Actions Run workflow → Impactor နဲ့ ဖုန်း ၂ လုံး install
 - [ ] **Build #3 (`adf0b48`)** — Actions မှာ Run workflow → Impactor နဲ့ ဖုန်း ၂ လုံး install → call / header / keyboard / hold-to-record / photo viewer / location စမ်းရန်
 - [ ] **Firestore rules ကို ပြန် Publish ရန်** — `call`/`location` types + `stories`/`storyMedia` + story `reactions` (user က stories ကို publish ပြီး; reactions update ပြီးနောက် ထပ် publish လုပ်မလုပ် မသေချာ)

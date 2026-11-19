@@ -21,6 +21,7 @@
     },
     "android": {
       "package": "com.tunlin.ichat",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -81,7 +82,8 @@
       [
         "expo-notifications",
         {
-          "color": "#208AEF"
+          "color": "#208AEF",
+          "icon": "./assets/images/android-icon-monochrome.png"
         }
       ],
       "@stream-io/video-react-native-sdk",
@@ -110,7 +112,7 @@
       ]
     ],
     "extra": {
-      "pushWorkerUrl": "https://ichat-push.tunlin-tlin-ac2.workers.dev",
+      "pushWorkerUrl": "https://ichat-push.ichat-push-worker.workers.dev",
       "webPushVapidKey": "",
       "streamApiKey": "uc5wwkmp728q"
     },
