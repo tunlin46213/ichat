@@ -6,7 +6,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CountBadge } from '@/components/badge';
 import { Icon, type IconName } from '@/components/icon';
+import { useAuth } from '@/context/auth';
 import { useChats } from '@/context/chats';
+import { useNewMoments } from '@/lib/moments';
 import { useTheme } from '@/hooks/use-theme';
 
 // Native tabs have no iOS-style tab bar on web, so build one with headless tabs.
@@ -16,6 +18,8 @@ export default function TabsLayout() {
   const theme = useTheme();
   const { totalUnread } = useChats();
   const { bottom } = useSafeAreaInsets();
+  const { user } = useAuth();
+  const newMoments = useNewMoments(user?.uid);
   return (
     <Tabs style={[styles.flex, { backgroundColor: theme.background }]}>
       {/* Room below the content for the floating bar, so nothing hides behind it. */}
@@ -39,6 +43,9 @@ export default function TabsLayout() {
             badge={totalUnread}
           />
         </TabTrigger>
+        <TabTrigger name="moments" href={'/moments' as Href} asChild>
+          <TabButton label="Moments" icon="photo.stack" activeIcon="photo.stack.fill" dot={newMoments} />
+        </TabTrigger>
         <TabTrigger name="settings" href={'/settings' as Href} asChild>
           <TabButton label="Settings" icon="gearshape" activeIcon="gearshape.fill" />
         </TabTrigger>
@@ -49,7 +56,7 @@ export default function TabsLayout() {
 
 // `ref` is omitted from the type only: expo-router's slot ref type doesn't match
 // Pressable's. At runtime the ref still flows through `...props`.
-function TabButton({ label, icon, activeIcon, badge = 0, isFocused, ...props }: Omit<
+function TabButton({ label, icon, activeIcon, badge = 0, dot = false, isFocused, ...props }: Omit<
   TabTriggerSlotProps,
   'ref'
 > & {
@@ -57,6 +64,8 @@ function TabButton({ label, icon, activeIcon, badge = 0, isFocused, ...props }: 
   icon: IconName;
   activeIcon: IconName;
   badge?: number;
+  /** a plain red dot (something new, no count) */
+  dot?: boolean;
 }) {
   const theme = useTheme();
   const color = isFocused ? theme.accent : '#8E8E93';
@@ -69,6 +78,7 @@ function TabButton({ label, icon, activeIcon, badge = 0, isFocused, ...props }: 
         </Animated.View>
         <Text style={[styles.tabLabel, { color }]}>{label}</Text>
         <CountBadge count={badge} color="#FF3B30" style={styles.badge} />
+        {dot && !badge ? <View style={styles.dot} /> : null}
       </View>
     </Pressable>
   );
@@ -78,11 +88,12 @@ const BAR_HEIGHT = 62;
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
+  dot: { position: 'absolute', top: 6, left: '58%', width: 9, height: 9, borderRadius: 5, backgroundColor: '#FF3B30' },
   bar: {
     position: 'absolute',
     alignSelf: 'center',
     flexDirection: 'row',
-    width: 220,
+    width: 300,
     height: BAR_HEIGHT,
     padding: 4,
     borderRadius: BAR_HEIGHT / 2,

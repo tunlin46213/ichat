@@ -48,6 +48,11 @@ function RootNavigator() {
     if (Platform.OS === 'web' || !signedIn) return;
     const open = (response: Notifications.NotificationResponse) => {
       const data = response.notification.request.content.data as Partial<ChatNotificationData>;
+      // "Bae liked / commented on your moment": open it.
+      if (data?.moment) {
+        router.push({ pathname: '/moment/[id]', params: { id: data.moment } });
+        return;
+      }
       // "Bae posted a story" (Android): play their stories.
       if (data?.story) {
         router.push({ pathname: '/story/[uid]', params: { uid: data.story } });
@@ -116,6 +121,9 @@ function RootNavigator() {
           name="story/[uid]"
           options={{ presentation: 'fullScreenModal', animation: 'fade' }}
         />
+        {/* Moments: compose (sheet) and one post with its comments. */}
+        <Stack.Screen name="moment/new" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="moment/[id]" options={{ headerBackButtonDisplayMode: 'minimal' }} />
         {/* Contact sheet: block / report. */}
         <Stack.Screen
           name="user/[id]"

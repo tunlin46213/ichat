@@ -140,6 +140,8 @@ export type ChatNotificationData = {
   call?: string;
   /** Android story alert: whose stories to open */
   story?: string;
+  /** Android moment like / comment alert: which moment to open */
+  moment?: string;
 };
 
 export type WebPushState = 'unsupported' | 'needs-install' | 'off' | 'denied' | 'on';

@@ -23,9 +23,15 @@ module.exports = ({ config }) => {
   if (process.env.SIDELOAD !== '1') {
     // Android (and paid-account iOS builds): Stream's ringing setup, which makes an
     // incoming call ring full screen with Accept / Decline even when iChat is closed.
-    const plugins = (config.plugins ?? []).map((plugin) =>
-      plugin === '@stream-io/video-react-native-sdk' ? ['@stream-io/video-react-native-sdk', { ringing: true }] : plugin
-    );
+    const plugins = [
+      // React Native Firebase (needed by the ringing module) clashes with expo-notifications
+      // over the notification colour in the Android manifest. First in the list on purpose:
+      // manifest mods run last-added-first, so this one sees expo-notifications' entry.
+      './plugins/with-firebase-manifest-fix',
+      ...(config.plugins ?? []).map((plugin) =>
+        plugin === '@stream-io/video-react-native-sdk' ? ['@stream-io/video-react-native-sdk', { ringing: true }] : plugin
+      ),
+    ];
     return { ...config, plugins, extra };
   }
 

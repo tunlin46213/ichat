@@ -129,6 +129,59 @@ service cloud.firestore {
       allow delete: if signedIn() && resource.data.ownerId == request.auth.uid;
     }
 
+    // Moments: posts with text and up to 9 photos that stay until the author deletes
+    // them. Every member can read them, like (only their own key) and comment.
+    match /moments/{momentId} {
+      allow read: if member();
+      allow create: if member()
+        && request.resource.data.authorId == request.auth.uid
+        && (!('text' in request.resource.data)
+            || (request.resource.data.text is string && request.resource.data.text.size() <= 1000))
+        && request.resource.data.photos is list
+        && request.resource.data.photos.size() <= 9
+        && (request.resource.data.photos.size() > 0 || request.resource.data.get('text', '').size() > 0)
+        && !('likes' in request.resource.data)
+        && request.resource.data.get('commentCount', 0) == 0;
+      allow update: if member() && (
+        // Like / unlike: only my own entry.
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes'])
+          && request.resource.data.get('likes', {})
+               .diff(resource.data.get('likes', {}))
+               .affectedKeys().hasOnly([request.auth.uid]))
+        ||
+        // The comment counter moves by one with each comment added or removed.
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['commentCount'])
+          && request.resource.data.commentCount is int
+          && math.abs(request.resource.data.commentCount - resource.data.get('commentCount', 0)) <= 1)
+      );
+      allow delete: if signedIn() && resource.data.authorId == request.auth.uid;
+
+      match /comments/{commentId} {
+        allow read: if member();
+        allow create: if member()
+          && request.resource.data.authorId == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 500
+          && exists(/databases/$(database)/documents/moments/$(momentId));
+        // The commenter, or the moment's author (also when deleting the whole moment).
+        allow delete: if signedIn()
+          && (resource.data.authorId == request.auth.uid
+              || get(/databases/$(database)/documents/moments/$(momentId)).data.authorId == request.auth.uid);
+      }
+    }
+
+    // Moment photos (base64, ≤ 1080 px). People the author blocked can't open them.
+    match /momentMedia/{photoId} {
+      allow get: if member() && !blockedBy(resource.data.ownerId);
+      allow create: if member()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.data is string
+        && request.resource.data.data.size() <= 950000
+        && request.resource.data.mime == 'image/jpeg';
+      allow delete: if signedIn() && resource.data.ownerId == request.auth.uid;
+    }
+
     // 1:1 chats. chatId = the two user IDs sorted and joined with "_".
     match /chats/{chatId} {
       function isMember() {

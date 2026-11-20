@@ -8,6 +8,7 @@
  *   POST /bark-status                            → { enabled, preview }
  *   POST /bark-test                              → test notification to my own phone
  *   POST /story-posted   { storyId }             → "X posted a story" to their contacts
+ *   POST /moment-activity { momentId, kind, text? } → "X liked / commented on your moment"
  *   cron (hourly)                                → delete expired stories and their photos
  *   POST /admin/users                            → every account (admins only, config/admins.uids)
  *   POST /admin/user/disable { uid, disabled }   → block / allow sign-in
@@ -595,6 +596,63 @@ async function storyPosted(env: Env, caller: Caller, storyId: string) {
   return json({ sent: results.filter((r) => r.status === 'fulfilled' && r.value.ok).length });
 }
 
+/** "Bae liked your moment" / "Bae commented: …" on the moment author's phone. */
+async function momentActivity(env: Env, caller: Caller, momentId: string, kind: 'like' | 'comment', text: string) {
+  if (!env.FIREBASE_SERVICE_ACCOUNT) return json({ sent: 0 });
+  const moment = await getDoc(env, `moments/${momentId}`);
+  const authorId = moment?.fields?.authorId?.stringValue;
+  if (!authorId || authorId === caller.uid) return json({ sent: 0 });
+  // A like alerts once per person per moment, however often it is toggled.
+  if (kind === 'like' && env.BARK) {
+    const key = `moment-like:${momentId}:${caller.uid}`;
+    if (await env.BARK.get(key)) return json({ sent: 0, reason: 'already sent' });
+    await env.BARK.put(key, '1', { expirationTtl: 30 * 86400 });
+  }
+  const [blocks, push] = await Promise.all([getDoc(env, `blocks/${authorId}`), getDoc(env, `users/${authorId}/private/push`)]);
+  if (strings(blocks?.fields?.blocked).includes(caller.uid)) return json({ sent: 0 });
+  if (await isInApp(env, caller, authorId)) return json({ sent: 0 });
+  const quiet = parseQuiet(push);
+  const silent = !!quiet && isQuietNow(quiet);
+  const name = caller.name?.trim() || 'Someone';
+  const jobs: Promise<Response>[] = [];
+  const bark = await barkSettings(env, authorId);
+  const body = (preview: boolean) =>
+    kind === 'like' ? 'liked your moment ❤️' : preview && text ? `commented: ${text}` : 'commented on your moment 💬';
+  if (bark) {
+    jobs.push(
+      sendBark(bark, { title: name, body: body(bark.preview), url: `ichat://moment/${momentId}`, group: 'moments', id: `moment-${momentId}`, silent })
+    );
+  }
+  const auth = `Bearer ${await accessToken(env)}`;
+  for (const token of strings(push?.fields?.androidTokens)) {
+    jobs.push(
+      fetch(`https://fcm.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/messages:send`, {
+        method: 'POST',
+        headers: { Authorization: auth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: {
+            token,
+            notification: { title: name, body: body(true) },
+            // Read by the app when tapped (src/app/_layout.tsx → the moment).
+            data: { moment: momentId },
+            android: {
+              priority: 'NORMAL',
+              ttl: '86400s',
+              notification: {
+                channel_id: silent ? 'quiet' : 'messages',
+                tag: `moment-${momentId}`,
+                ...(silent ? {} : { sound: 'default' }),
+              },
+            },
+          },
+        }),
+      })
+    );
+  }
+  const results = await Promise.allSettled(jobs);
+  return json({ sent: results.filter((r) => r.status === 'fulfilled' && r.value.ok).length });
+}
+
 /**
  * Hourly (wrangler.toml [triggers]): deletes stories past their 24 hours and their
  * photos, so they stop using the free 1 GB even if the owner never opens the app.
@@ -804,6 +862,13 @@ export default {
         const { storyId } = (await request.json()) as { storyId?: string };
         if (!storyId || !/^[A-Za-z0-9]{10,40}$/.test(storyId)) return json({ error: 'bad request' }, 400);
         return await storyPosted(env, caller, storyId);
+      }
+      if (pathname === '/moment-activity') {
+        const { momentId, kind, text } = (await request.json()) as { momentId?: string; kind?: string; text?: string };
+        if (!momentId || !/^[A-Za-z0-9]{10,40}$/.test(momentId) || (kind !== 'like' && kind !== 'comment')) {
+          return json({ error: 'bad request' }, 400);
+        }
+        return await momentActivity(env, caller, momentId, kind, typeof text === 'string' ? text.slice(0, 120) : '');
       }
       if (pathname.startsWith('/admin/')) {
         if (!(await isAdmin(env, uid))) return json({ error: 'forbidden' }, 403);
