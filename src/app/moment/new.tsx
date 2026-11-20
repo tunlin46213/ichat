@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { router, Stack } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -30,6 +30,14 @@ export default function NewMomentScreen() {
   const [photos, setPhotos] = useState<PickedImage[]>([]);
   const [preparing, setPreparing] = useState(false);
   const [posting, setPosting] = useState(false);
+  // Android's back button can still leave mid-post; then the finished post must not navigate.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true; // again after a dev StrictMode remount
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const canPost = !posting && !preparing && (text.trim().length > 0 || photos.length > 0);
 
   async function addPhotos(source: 'library' | 'camera') {
@@ -57,7 +65,7 @@ export default function NewMomentScreen() {
       await postMoment(user.uid, text, photos);
       haptics.success();
       toast.success('Moment shared', 'checkmark.circle.fill');
-      router.back();
+      if (mounted.current) router.back();
     } catch (err) {
       const code = (err as { code?: string })?.code;
       toast.error(
@@ -65,7 +73,7 @@ export default function NewMomentScreen() {
           ? 'Moments aren’t switched on yet. The admin needs to publish the latest database rules.'
           : `Could not share it (${code ?? 'network'}). Check your connection and try again.`
       );
-      setPosting(false);
+      if (mounted.current) setPosting(false);
     }
   }
 

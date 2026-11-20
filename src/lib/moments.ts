@@ -48,7 +48,16 @@ export type Moment = {
   createdAt: Timestamp | null;
 };
 
-export type MomentComment = { id: string; authorId: string; text: string; createdAt: Timestamp | null };
+/** The comment a reply answers (name kept so it shows even if that comment is deleted). */
+export type CommentReplyTo = { id: string; authorId: string; name: string };
+
+export type MomentComment = {
+  id: string;
+  authorId: string;
+  text: string;
+  replyTo?: CommentReplyTo;
+  createdAt: Timestamp | null;
+};
 
 const momentRef = (id: string) => doc(db, 'moments', id);
 
@@ -91,15 +100,20 @@ export async function toggleLike(moment: Moment, uid: string) {
   if (!liked && moment.authorId !== uid) notifyMomentActivity(moment.id, 'like');
 }
 
-export async function addComment(momentId: string, authorId: string, text: string) {
+export async function addComment(momentId: string, authorId: string, text: string, replyTo?: CommentReplyTo) {
   const clean = text.trim().slice(0, MAX_COMMENT_TEXT);
   if (!clean) return;
   // Comment and counter together, so the count never drifts from the comments.
   const batch = writeBatch(db);
-  batch.set(doc(collection(db, 'moments', momentId, 'comments')), { authorId, text: clean, createdAt: serverTimestamp() });
+  batch.set(doc(collection(db, 'moments', momentId, 'comments')), {
+    authorId,
+    text: clean,
+    ...(replyTo ? { replyTo: { id: replyTo.id, authorId: replyTo.authorId, name: replyTo.name.slice(0, 60) } } : {}),
+    createdAt: serverTimestamp(),
+  });
   batch.update(momentRef(momentId), { commentCount: increment(1) });
   await batch.commit();
-  notifyMomentActivity(momentId, 'comment', clean);
+  notifyMomentActivity(momentId, 'comment', clean, replyTo?.id);
 }
 
 export async function deleteComment(momentId: string, commentId: string) {
@@ -116,8 +130,13 @@ export async function deleteMyMoments(uid: string) {
 }
 
 /** "Bae liked / commented on your moment" on the author's phone (push worker). */
-function notifyMomentActivity(momentId: string, kind: 'like' | 'comment', text?: string) {
-  post('/moment-activity', { momentId, kind, ...(text ? { text: text.slice(0, 120) } : {}) }).catch(() => {});
+function notifyMomentActivity(momentId: string, kind: 'like' | 'comment', text?: string, replyTo?: string) {
+  post('/moment-activity', {
+    momentId,
+    kind,
+    ...(text ? { text: text.slice(0, 120) } : {}),
+    ...(replyTo ? { replyTo } : {}),
+  }).catch(() => {});
 }
 
 /** Newest first; `count` grows as the feed scrolls. */

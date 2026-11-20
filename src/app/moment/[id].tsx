@@ -1,5 +1,6 @@
 import { router, Stack, useLocalSearchParams, type Href } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useHeaderHeight } from 'expo-router/react-navigation';
+import { useEffect, useRef, useState, type ComponentRef } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -26,13 +27,21 @@ import { useTheme } from '@/hooks/use-theme';
 import { useUserProfiles } from '@/hooks/use-user-profiles';
 import { confirmDestructive } from '@/lib/confirm';
 import { haptics } from '@/lib/haptics';
-import { addComment, deleteComment, MAX_COMMENT_TEXT, useComments, useMoment } from '@/lib/moments';
+import {
+  addComment,
+  deleteComment,
+  MAX_COMMENT_TEXT,
+  useComments,
+  useMoment,
+  type CommentReplyTo,
+} from '@/lib/moments';
 
 /** One moment with all its comments, and a field to add one. */
 export default function MomentScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const headerHeight = useHeaderHeight();
   const { user } = useAuth();
   const myUid = user!.uid;
   const moment = useMoment(id);
@@ -42,6 +51,8 @@ export default function MomentScreen() {
   const now = useNow(60_000);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
+  const [replyTo, setReplyTo] = useState<CommentReplyTo | null>(null);
+  const input = useRef<ComponentRef<typeof TextInput>>(null);
   const profiles = useUserProfiles([
     myUid,
     ...(moment ? [moment.authorId, ...Object.keys(moment.likes ?? {})] : []),
@@ -60,14 +71,21 @@ export default function MomentScreen() {
     if (!clean || sending || !moment) return;
     setSending(true);
     try {
-      await addComment(moment.id, myUid, clean);
+      await addComment(moment.id, myUid, clean, replyTo ?? undefined);
       setText('');
+      setReplyTo(null);
       haptics.light();
     } catch {
       toast.error('Could not post the comment. Try again.');
     } finally {
       setSending(false);
     }
+  }
+
+  function reply(commentId: string, authorId: string) {
+    setReplyTo({ id: commentId, authorId, name: profiles[authorId]?.name ?? 'Someone' });
+    haptics.light();
+    input.current?.focus();
   }
 
   function remove(commentId: string) {
@@ -83,7 +101,8 @@ export default function MomentScreen() {
     <KeyboardAvoidingView
       style={[styles.flex, { backgroundColor: theme.groupedBackground }]}
       behavior={Platform.OS === 'web' ? undefined : 'padding'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 64 : 0}>
+      // The real header height (≈ 100 on notched iPhones): a fixed 64 left the field under the keyboard.
+      keyboardVerticalOffset={Platform.OS === 'ios' ? headerHeight : 0}>
       <Stack.Screen
         options={{
           headerShown: true,
@@ -130,30 +149,64 @@ export default function MomentScreen() {
                 accessibilityHint={canDelete ? 'Long press to delete' : undefined}
                 style={styles.comment}>
                 <Avatar id={item.authorId} name={author?.name ?? '?'} size={32} uri={author?.avatarUrl} />
-                <View style={[styles.bubble, { backgroundColor: theme.card }]}>
-                  <Text style={[styles.commentName, { color: theme.text }]}>
-                    {item.authorId === myUid ? 'You' : (author?.name ?? 'Someone')}
+                <View style={styles.commentBody}>
+                  <View style={[styles.bubble, { backgroundColor: theme.card }]}>
+                    <Text style={[styles.commentName, { color: theme.text }]}>
+                      {item.authorId === myUid ? 'You' : (author?.name ?? 'Someone')}
+                    </Text>
+                    {item.replyTo ? (
+                      <Text style={[styles.replyLabel, { color: theme.accent }]} numberOfLines={1}>
+                        ↪ {item.replyTo.authorId === myUid ? 'You' : (profiles[item.replyTo.authorId]?.name ?? item.replyTo.name)}
+                      </Text>
+                    ) : null}
+                    <Text style={[styles.commentText, { color: theme.text }]}>{item.text}</Text>
+                  </View>
+                  <View style={styles.commentMeta}>
                     <Text style={[styles.commentTime, { color: theme.textSecondary }]}>
-                      {'  '}
                       {timeAgo(item.createdAt?.toMillis(), now)}
                     </Text>
-                  </Text>
-                  <Text style={[styles.commentText, { color: theme.text }]}>{item.text}</Text>
+                    <Pressable
+                      onPress={() => reply(item.id, item.authorId)}
+                      hitSlop={8}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Reply to ${author?.name ?? 'comment'}`}>
+                      <Text style={[styles.replyButton, { color: theme.textSecondary }]}>Reply</Text>
+                    </Pressable>
+                  </View>
                 </View>
               </Pressable>
             );
           }}
         />
       )}
+      {replyTo ? (
+        <View style={[styles.replyBar, { backgroundColor: theme.background, borderTopColor: theme.separator }]}>
+          <Text style={[styles.replyBarText, { color: theme.textSecondary }]} numberOfLines={1}>
+            Replying to{' '}
+            <Text style={{ color: theme.text, fontWeight: '600' }}>
+              {replyTo.authorId === myUid ? 'yourself' : replyTo.name}
+            </Text>
+          </Text>
+          <Pressable onPress={() => setReplyTo(null)} hitSlop={10} accessibilityRole="button" accessibilityLabel="Cancel reply">
+            <Icon name="xmark.circle.fill" size={18} color={theme.textSecondary} fallback="✕" />
+          </Pressable>
+        </View>
+      ) : null}
       <View
         style={[
           styles.composer,
-          { backgroundColor: theme.background, borderTopColor: theme.separator, paddingBottom: Math.max(insets.bottom, 10) },
+          {
+            backgroundColor: theme.background,
+            borderTopColor: theme.separator,
+            borderTopWidth: replyTo ? 0 : StyleSheet.hairlineWidth,
+            paddingBottom: Math.max(insets.bottom, 10),
+          },
         ]}>
         <TextInput
+          ref={input}
           value={text}
           onChangeText={setText}
-          placeholder="Add a comment…"
+          placeholder={replyTo && replyTo.authorId !== myUid ? `Reply to ${replyTo.name}…` : 'Add a comment…'}
           placeholderTextColor={theme.textSecondary}
           maxLength={MAX_COMMENT_TEXT}
           multiline
@@ -180,9 +233,23 @@ const styles = StyleSheet.create({
   section: { fontSize: 13, fontWeight: '600', marginLeft: 4 },
   empty: { fontSize: 15, textAlign: 'center', marginTop: Spacing.three },
   comment: { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
-  bubble: { flex: 1, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 8, gap: 2 },
+  commentBody: { flex: 1, gap: 3 },
+  bubble: { borderRadius: 14, paddingHorizontal: 12, paddingVertical: 8, gap: 2 },
+  commentMeta: { flexDirection: 'row', gap: 14, paddingLeft: 12 },
+  replyButton: { fontSize: 12, fontWeight: '700' },
+  replyLabel: { fontSize: 13, fontWeight: '600' },
+  replyBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  replyBarText: { flex: 1, fontSize: 13 },
   commentName: { fontSize: 14, fontWeight: '700' },
-  commentTime: { fontSize: 12, fontWeight: '400' },
+  commentTime: { fontSize: 12 },
   commentText: { fontSize: 15, lineHeight: 20 },
   composer: {
     flexDirection: 'row',
