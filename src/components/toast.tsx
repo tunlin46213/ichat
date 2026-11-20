@@ -1,8 +1,9 @@
 import { BlurView } from 'expo-blur';
 import { useEffect, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeOutUp, SlideInUp } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { FullWindowOverlay } from 'react-native-screens';
 
 import { Icon, type IconName } from '@/components/icon';
 import { Elevation, Radius, Semantic } from '@/constants/theme';
@@ -67,6 +68,15 @@ export function ToastHost() {
   }, [currentId]);
 
   if (!current) return null;
+  // iOS: native modal screens (New Moment, New Chat…) sit above the root view, so a plain
+  // overlay would hide behind them. FullWindowOverlay draws in its own window on top.
+  if (Platform.OS === 'ios') {
+    return (
+      <FullWindowOverlay>
+        <ToastView key={current.id} toast={current} />
+      </FullWindowOverlay>
+    );
+  }
   return <ToastView key={current.id} toast={current} />;
 }
 

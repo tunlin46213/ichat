@@ -122,7 +122,9 @@ function RootNavigator() {
           options={{ presentation: 'fullScreenModal', animation: 'fade' }}
         />
         {/* Moments: compose (sheet) and one post with its comments. */}
-        <Stack.Screen name="moment/new" options={{ presentation: 'modal' }} />
+        {/* Not a native modal: on iOS the photo picker opened from a modal sheet came back
+            without its photos. A plain screen that slides up looks the same. */}
+        <Stack.Screen name="moment/new" options={{ animation: 'slide_from_bottom', gestureDirection: 'vertical' }} />
         <Stack.Screen name="moment/[id]" options={{ headerBackButtonDisplayMode: 'minimal' }} />
         {/* Contact sheet: block / report. */}
         <Stack.Screen
