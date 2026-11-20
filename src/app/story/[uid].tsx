@@ -1,5 +1,5 @@
 import { Image } from 'expo-image';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -44,6 +44,7 @@ import {
   backgroundCss,
   deleteStory,
   loadStoryPhoto,
+  prefetchStoryPhotos,
   markStoryViewed,
   reactionSummary,
   reactToStory,
@@ -91,7 +92,7 @@ export default function StoryViewerScreen() {
   const { user, displayName } = useAuth();
   const myUid = user!.uid;
   const mine = ownerId === myUid;
-  const { groupFor } = useStories();
+  const { groupFor, loaded } = useStories();
   const group = groupFor(ownerId);
   const stories = group?.stories ?? [];
   const owner = useUserProfile(ownerId);
@@ -99,12 +100,11 @@ export default function StoryViewerScreen() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
 
-  // Start at the first story I haven't seen (mine: from the beginning).
-  const [index, setIndex] = useState(() => {
-    if (mine) return 0;
-    const first = stories.findIndex((s) => !seenBy(s, myUid));
-    return first < 0 ? 0 : first;
-  });
+  // Start at the first story I haven't seen (mine: from the beginning). Worked out from
+  // the stories once they're there: opened from an alert, they may still be loading.
+  const firstUnseen = mine ? 0 : Math.max(0, stories.findIndex((s) => !seenBy(s, myUid)));
+  const [picked, setIndex] = useState<number | null>(null);
+  const index = picked ?? firstUnseen;
   const [held, setHeld] = useState(false);
   const [typing, setTyping] = useState(false);
   const [viewersOpen, setViewersOpen] = useState(false);
@@ -116,6 +116,15 @@ export default function StoryViewerScreen() {
   const burstCount = useRef(0);
   const current: Story | undefined = stories[Math.min(index, stories.length - 1)];
   const photoUri = useStoryPhoto(current);
+  // Load the next two photos (and the next person's first one) while this one plays.
+  const nextOwner = (queue ?? '').split(',').filter(Boolean)[0];
+  const upcoming = [stories[index + 1], stories[index + 2], nextOwner ? groupFor(nextOwner)?.stories[0] : undefined];
+  const upcomingKey = upcoming.map((s) => s?.id ?? '').join(',');
+  useEffect(() => {
+    prefetchStoryPhotos(upcoming);
+    // upcomingKey stands for the list: refetching only when the ids change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [upcomingKey]);
   const ready = !!current && (current.kind === 'text' || !!photoUri);
   const paused = held || typing || viewersOpen || emojiOpen;
   const myReaction = current?.reactions?.[myUid];
@@ -124,7 +133,9 @@ export default function StoryViewerScreen() {
   const drag = useSharedValue(0);
 
   function close() {
-    router.back();
+    // Opened from an alert, there may be nothing to go back to.
+    if (router.canGoBack()) router.back();
+    else router.replace('/chats' as Href);
   }
 
   function goNext() {
@@ -146,10 +157,12 @@ export default function StoryViewerScreen() {
     if (index > 0) setIndex(index - 1);
   }
 
-  // Nothing (left) to show: their stories expired or were deleted.
+  // Nothing (left) to show: their stories expired or were deleted. Only once the list
+  // has loaded; before that an empty list means nothing.
+  const gone = loaded && !group;
   useEffect(() => {
-    if (!group) router.back();
-  }, [group]);
+    if (gone) close();
+  }, [gone]);
 
   // Run the progress bar while the story is loaded and not paused; then go on.
   const currentId = current?.id;
@@ -261,7 +274,12 @@ export default function StoryViewerScreen() {
   }
 
   if (!current) {
-    return <View style={[styles.fill, styles.black]} />;
+    // Still loading (opened from an alert): a spinner rather than a blank screen.
+    return (
+      <View style={[styles.fill, styles.black, styles.center]}>
+        {loaded ? null : <ActivityIndicator color="#fff" />}
+      </View>
+    );
   }
 
   const viewerIds = [
@@ -608,6 +626,7 @@ function ViewersSheet({ story, viewerIds, bottomInset, onClose }: {
 }
 
 const styles = StyleSheet.create({
+  center: { alignItems: 'center', justifyContent: 'center' },
   fill: { flex: 1 },
   flex: { flex: 1 },
   black: { backgroundColor: '#000' },

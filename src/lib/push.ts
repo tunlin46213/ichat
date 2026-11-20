@@ -85,6 +85,14 @@ async function registerAndroid(uid: string) {
       bypassDnd: false,
       lockscreenVisibility: AndroidNotificationVisibility.PUBLIC,
     });
+    // Quiet hours: shown, but no sound or vibration.
+    await Notifications.setNotificationChannelAsync('quiet', {
+      name: 'Quiet hours',
+      importance: AndroidImportance.LOW,
+      sound: null,
+      enableVibrate: false,
+      lockscreenVisibility: AndroidNotificationVisibility.PRIVATE,
+    });
     let { status } = await Notifications.getPermissionsAsync();
     if (status !== 'granted') status = (await Notifications.requestPermissionsAsync()).status;
     if (status !== 'granted') return;
@@ -130,6 +138,8 @@ export type ChatNotificationData = {
   name: string;
   /** Android call alert: the Stream call to ring when tapped */
   call?: string;
+  /** Android story alert: whose stories to open */
+  story?: string;
 };
 
 export type WebPushState = 'unsupported' | 'needs-install' | 'off' | 'denied' | 'on';

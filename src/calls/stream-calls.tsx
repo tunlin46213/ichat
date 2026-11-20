@@ -15,12 +15,16 @@ import { chatIdFor, sendCallMessage } from '@/lib/chat';
 import { fetchStreamToken, notifyCall } from '@/lib/notify';
 import { streamApiKey } from '@/lib/runtime';
 
+import { setupAndroidRinging } from './android-ringing';
 import { CallPill, CallScreen } from './call-screen';
 import { CallsContext } from './context';
 import { clearPendingCall, onPendingCall } from './pending';
 
 // Issued by the Cloudflare worker (worker/src/index.ts → /stream-token).
 const tokenProvider = fetchStreamToken;
+
+// Android: full-screen incoming calls while iChat is closed (Stream ringing push).
+setupAndroidRinging();
 
 /** Settles when the last client we dropped has finished disconnecting. */
 let disconnecting: Promise<unknown> = Promise.resolve();

@@ -1,13 +1,18 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 
 /** Web: Ionicons has a real double check ("checkmark-done"). Same props as read-ticks.tsx. */
-export function ReadTicks({ read, color, size = 13 }: { read: boolean; color: string; size?: number }) {
+export function ReadTicks({ read, delivered = false, color, size = 13 }: {
+  read: boolean;
+  delivered?: boolean;
+  color: string;
+  size?: number;
+}) {
   return (
     <Ionicons
-      name={read ? 'checkmark-done' : 'checkmark'}
+      name={read || delivered ? 'checkmark-done' : 'checkmark'}
       size={size + 4}
       color={color}
-      accessibilityLabel={read ? 'Read' : 'Delivered'}
+      accessibilityLabel={read ? 'Read' : delivered ? 'Delivered' : 'Sent'}
     />
   );
 }

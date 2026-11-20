@@ -92,6 +92,7 @@ export function MessageBubble({
   otherName,
   starred,
   read = false,
+  delivered = false,
   avatar,
   scheduledFor = null,
   highlighted,
@@ -115,8 +116,10 @@ export function MessageBubble({
   otherName: string;
   /** I starred it (shows a small ★) */
   starred?: boolean;
-  /** mine and the other person has read it (✓✓) */
+  /** mine and the other person has read it (✓✓, bright) */
   read?: boolean;
+  /** mine and it reached their app (✓✓, dim) */
+  delivered?: boolean;
   /** "Tomorrow 9:00 AM" while my scheduled message waits to go out */
   scheduledFor?: string | null;
   /** their photo, shown beside the last bubble of each run of their messages */
@@ -144,6 +147,7 @@ export function MessageBubble({
       message={message}
       mine={mine}
       read={read}
+      delivered={delivered}
       starred={!!starred}
       overlay={false}
       scheduledFor={scheduledFor}
@@ -173,7 +177,7 @@ export function MessageBubble({
   const passed = useRef(false);
   const pan = usePanGesture({
     runOnJS: true,
-    enabled: !message.deleted && !message.pending,
+    enabled: !message.deleted && !message.pending && !message.failed,
     // Only a rightward drag starts it; vertical movement leaves it to the list scroll.
     activeOffsetX: 14,
     failOffsetY: [-12, 12],
@@ -204,7 +208,7 @@ export function MessageBubble({
     numberOfTaps: 2,
     // Text only: photos, voice notes, locations and call entries act on the first tap
     // (open, play, open Maps, call back), so a double tap would trigger that too.
-    enabled: !message.deleted && !message.pending && type === 'text',
+    enabled: !message.deleted && !message.pending && !message.failed && type === 'text',
     onActivate: () => {
       // Only celebrate adding a ❤️, not removing it.
       if (message.reactions?.[myUid] !== '❤️') {
@@ -284,6 +288,8 @@ export function MessageBubble({
           <Pressable
             ref={bubbleRef}
             onLongPress={longPress}
+            // Not delivered: a tap opens Try Again / Delete (the same as a long press).
+            onPress={message.failed ? longPress : undefined}
             delayLongPress={280}
             accessibilityHint="Long press for reactions and more. Swipe right to reply. Double tap to like."
             style={[
@@ -309,6 +315,7 @@ export function MessageBubble({
                   { backgroundColor: mine ? bubbleColor : theme.bubbleIncoming },
                   // Waiting to be sent: faded with a dashed outline.
                   scheduledFor ? styles.scheduled : null,
+                  message.failed ? styles.failed : null,
                 ]}>
                 {tail ? <BubbleTail side={mine ? 'right' : 'left'} color={mine ? bubbleColor : theme.bubbleIncoming} /> : null}
                 {message.replyTo ? (
@@ -373,7 +380,7 @@ export function MessageBubble({
             {type === 'image' || type === 'location' ? (
               // Live location bubbles have a Stop button at the bottom: time goes on the map.
               <View style={message.liveUntil ? styles.overlayMetaTop : styles.overlayMeta} pointerEvents="none">
-                <BubbleMeta message={message} mine={mine} read={read} starred={!!starred} overlay />
+                <BubbleMeta message={message} mine={mine} read={read} delivered={delivered} starred={!!starred} overlay />
               </View>
             ) : null}
           </Pressable>
@@ -430,10 +437,11 @@ function BubbleTail({ side, color }: { side: 'left' | 'right'; color: string }) 
  * "edited ★ 3:05 PM ✓✓" inside the bubble. Mine: a clock while sending, ✓ once on the
  * server, ✓✓ once they've read it. `overlay` = on top of a photo / map.
  */
-function BubbleMeta({ message, mine, read, starred, overlay, scheduledFor = null }: {
+function BubbleMeta({ message, mine, read, delivered = false, starred, overlay, scheduledFor = null }: {
   message: Message;
   mine: boolean;
   read: boolean;
+  delivered?: boolean;
   starred: boolean;
   overlay: boolean;
   scheduledFor?: string | null;
@@ -444,7 +452,15 @@ function BubbleMeta({ message, mine, read, starred, overlay, scheduledFor = null
   const label = [message.editedAt ? 'edited' : null, formatMessageTime(message.createdAt)]
     .filter(Boolean)
     .join(' ');
-  const status = message.pending ? 'Sending' : read ? 'Read' : 'Sent';
+  const status = message.pending ? 'Sending' : read ? 'Read' : delivered ? 'Delivered' : 'Sent';
+  if (message.failed) {
+    return (
+      <View style={styles.meta} accessible accessibilityLabel="Not delivered. Tap to try again">
+        <Icon name="exclamationmark.circle.fill" size={11} color="#fff" fallback="!" />
+        <Text style={[styles.metaText, styles.failedText]}>Not delivered · tap to retry</Text>
+      </View>
+    );
+  }
   if (scheduledFor) {
     return (
       <View style={styles.meta} accessible accessibilityLabel={`Scheduled for ${scheduledFor}`}>
@@ -466,7 +482,7 @@ function BubbleMeta({ message, mine, read, starred, overlay, scheduledFor = null
         ) : (
           <View style={styles.ticks}>
             <Icon name="checkmark" size={10} color={tickColor} fallback="✓" />
-            {read ? (
+            {read || delivered ? (
               <View style={styles.secondTick}>
                 <Icon name="checkmark" size={10} color={tickColor} fallback="✓" />
               </View>
@@ -480,6 +496,8 @@ function BubbleMeta({ message, mine, read, starred, overlay, scheduledFor = null
 
 const styles = StyleSheet.create({
   scheduled: { opacity: 0.7, borderWidth: 1.5, borderStyle: 'dashed', borderColor: 'rgba(255,255,255,0.8)' },
+  failed: { opacity: 0.85, borderWidth: 1.5, borderColor: '#FF3B30' },
+  failedText: { color: '#fff', fontWeight: '600' },
   tailRight: { position: 'absolute', right: -5, bottom: 0 },
   tailLeft: { position: 'absolute', left: -5, bottom: 0 },
   avatarSlot: { width: 28, marginRight: 6, alignSelf: 'flex-end' },

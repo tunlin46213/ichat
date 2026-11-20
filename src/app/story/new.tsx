@@ -19,6 +19,7 @@ import { Icon } from '@/components/icon';
 import { ScalePressable } from '@/components/scale-pressable';
 import { useAuth } from '@/context/auth';
 import { haptics } from '@/lib/haptics';
+import { notifyStoryPosted } from '@/lib/notify';
 import {
   backgroundCss,
   postPhotoStory,
@@ -55,8 +56,8 @@ export default function NewStoryScreen() {
     if (!canShare || busy || !user) return;
     setBusy(true);
     try {
-      if (photo) await postPhotoStory(user.uid, photo, text);
-      else await postTextStory(user.uid, text, background);
+      const storyId = photo ? await postPhotoStory(user.uid, photo, text) : await postTextStory(user.uid, text, background);
+      notifyStoryPosted(storyId);
       haptics.success();
       close();
     } catch (err) {

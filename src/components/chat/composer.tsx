@@ -45,7 +45,7 @@ import { getDraft, setDraft as saveDraft } from '@/lib/drafts';
 import { haptics } from '@/lib/haptics';
 import { MAX_VOICE_MS } from '@/lib/media';
 
-const TYPING_SIGNAL_MS = 3000;
+const TYPING_SIGNAL_MS = 4000;
 const MIN_VOICE_MS = 800;
 /** Drag the held mic this far left to throw the recording away. */
 const CANCEL_AT = -90;

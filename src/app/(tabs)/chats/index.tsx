@@ -1,5 +1,5 @@
 import { router, Stack, type Href } from 'expo-router';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Swipeable, { type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
 import Animated, {
@@ -14,7 +14,13 @@ import { ActionSheet } from '@/components/action-sheet';
 import { AuroraBackground } from '@/components/aurora';
 import { Avatar } from '@/components/avatar';
 import { CountBadge } from '@/components/badge';
-import { InstallBanner, OfflineBanner, VerifyEmailBanner } from '@/components/banners';
+import {
+  BackgroundAlertsBanner,
+  InstallBanner,
+  OfflineBanner,
+  UpdateBanner,
+  VerifyEmailBanner,
+} from '@/components/banners';
 import { ChatPreview } from '@/components/chat-preview';
 import { HeaderAction } from '@/components/header-action';
 import { Icon, type IconName } from '@/components/icon';
@@ -56,8 +62,9 @@ import {
 import { confirmDestructive } from '@/lib/confirm';
 import { useDrafts } from '@/lib/drafts';
 import { haptics } from '@/lib/haptics';
-import { mediaErrorMessage, pickImage } from '@/lib/media';
+import { mediaErrorMessage, pickStoryImage } from '@/lib/media';
 import { setStoryDraft } from '@/lib/stories';
+import { setStoriesMuted, useStoryPrefs } from '@/lib/story-prefs';
 
 type Filter = 'all' | 'unread' | 'online';
 type ListItem = Chat | { kind: 'section'; id: string; title: string; count: number };
@@ -192,8 +199,10 @@ export default function ChatsScreen() {
               search={{ value: search, onChangeText: setSearch }}
             />
             <Greeting chats={chats} myUid={myUid} profiles={profiles} />
+            <UpdateBanner />
             <VerifyEmailBanner />
             <InstallBanner />
+            <BackgroundAlertsBanner />
             {!term && chats && !inArchive ? (
               <ContactsRow chats={chats} myUid={myUid} profiles={profiles} />
             ) : null}
@@ -284,12 +293,13 @@ function Greeting({ chats, myUid, profiles }: {
   if (unread) parts.push(`${unread} unread ${unread === 1 ? 'message' : 'messages'}`);
   if (active.length === 1) parts.push(`${active[0]!.name.split(' ')[0]} is active now`);
   else if (active.length > 1) parts.push(`${active.length} friends active now`);
-  if (!parts.length) parts.push(chats?.length ? "You're all caught up ✨" : 'Start a conversation');
+  // Quiet when there's nothing new: the list itself says that.
+  if (!parts.length) return null;
   return (
     <Animated.View entering={FadeIn.duration(400)} style={styles.greeting}>
       <Text style={[styles.greetingTitle, { color: theme.text }]} numberOfLines={1}>
         {greetingFor(new Date(now).getHours())}
-        {first ? `, ${first}` : ''} 👋
+        {first ? `, ${first}` : ''}
       </Text>
       <View style={styles.greetingRow}>
         {unread ? <View style={[styles.greetingDot, { backgroundColor: theme.accent }]} /> : null}
@@ -444,6 +454,13 @@ function ChatRow({ chat, myUid, profile, name, pinnedCount }: {
   // My last message was read once the other person's read marker passes it.
   const seen =
     sentByMe && (chat.lastRead?.[otherId]?.toMillis() ?? 0) >= (chat.updatedAt?.toMillis() ?? Infinity);
+  const deliveredToThem =
+    sentByMe && (chat.deliveredAt?.[otherId]?.toMillis() ?? 0) >= (chat.updatedAt?.toMillis() ?? Infinity);
+  // The row is see-through at rest; while it slides it needs a solid back, or the
+  // action buttons underneath show through the text.
+  const [swiping, setSwiping] = useState(false);
+  // Letting go after a swipe must not count as a tap that opens the chat (web, mouse).
+  const lastDrag = useRef(0);
 
   function run(swipeable: SwipeableMethods, action: () => Promise<unknown> | void) {
     swipeable.close();
@@ -532,22 +549,29 @@ function ChatRow({ chat, myUid, profile, name, pinnedCount }: {
   ];
 
   return (
-    <View
-      style={[
-        styles.card,
-        {
-          borderColor: unread > 0 ? `${theme.accent}66` : theme.glassBorder,
-          // Shadows on every scrolling row are costly on iOS; only unread chats glow.
-          boxShadow: unread > 0 ? `0 4px 16px ${theme.accent}30` : undefined,
-        },
-      ]}>
+    // Flat iOS-style row with a hairline inset from the avatar.
+    <View style={styles.card}>
     <Swipeable
       friction={2}
       leftThreshold={SWIPE_ACTION_WIDTH / 2}
       rightThreshold={SWIPE_ACTION_WIDTH / 2}
       overshootLeft={false}
       overshootRight={false}
-      onSwipeableWillOpen={() => haptics.medium()}
+      onSwipeableWillOpen={() => {
+        lastDrag.current = Date.now();
+        haptics.medium();
+      }}
+      onSwipeableWillClose={() => {
+        lastDrag.current = Date.now();
+      }}
+      onSwipeableOpenStartDrag={() => {
+        lastDrag.current = Date.now();
+        setSwiping(true);
+      }}
+      onSwipeableCloseStartDrag={() => {
+        lastDrag.current = Date.now();
+      }}
+      onSwipeableClose={() => setSwiping(false)}
       renderLeftActions={(progress, _t, swipeable) => (
         <SwipeActions progress={progress} actions={leftActions(swipeable)} />
       )}
@@ -555,18 +579,23 @@ function ChatRow({ chat, myUid, profile, name, pinnedCount }: {
         <SwipeActions progress={progress} actions={rightActions(swipeable)} />
       )}>
       <Pressable
-        onPress={() =>
-          router.push({ pathname: '/chat/[id]', params: { id: chat.id, otherId, name } })
-        }
+        onPress={() => {
+          // Open row: a tap closes it rather than opening the chat.
+          if (swiping || Date.now() - lastDrag.current < 500) return;
+          router.push({ pathname: '/chat/[id]', params: { id: chat.id, otherId, name } });
+        }}
         accessibilityLabel={`${name}${pinned ? ', pinned' : ''}${unread ? `, ${unread} unread` : ''}${draft ? ', draft' : ''}`}
         accessibilityHint="Swipe right for Unread and Pin, left for Mute, Archive and Delete."
         style={({ pressed }) => [
           styles.row,
-          { backgroundColor: theme.glassCard },
-          pressed && { opacity: 0.75 },
+          // See-through, so the aurora runs on behind the list (swipe actions only appear
+          // once the row moves, see SwipeActions).
+          { backgroundColor: pressed ? theme.backgroundSelected : swiping ? theme.background : 'transparent' },
         ]}>
-        {unread > 0 ? <View style={[styles.unreadBar, { backgroundColor: theme.accent }]} /> : null}
+        {/* Unread: a dot in the left gutter, like Messages and Mail. */}
+        <View style={[styles.unreadDot, unread > 0 && !muted && { backgroundColor: bubbleColor }]} />
         <Avatar id={otherId} name={name} size={56} online={online} uri={profile?.avatarUrl} />
+        <View style={[styles.hairline, { backgroundColor: theme.separator }]} />
         <View style={styles.rowBody}>
           <View style={styles.rowTop}>
             <Text
@@ -608,7 +637,7 @@ function ChatRow({ chat, myUid, profile, name, pinnedCount }: {
             ) : (
               <View style={styles.previewRow}>
                 {sentByMe ? (
-                  <ReadTicks read={seen} color={seen ? bubbleColor : theme.textSecondary} />
+                  <ReadTicks read={seen} delivered={deliveredToThem} color={seen ? bubbleColor : theme.textSecondary} />
                 ) : null}
                 <ChatPreview
                   text={chat.lastMessage ?? ''}
@@ -685,11 +714,10 @@ function ArchivedRow({ count, unread, open, onPress }: {
       accessibilityRole="button"
       accessibilityLabel={open ? 'Back to chats' : `Archived, ${count} chats${unread ? `, ${unread} unread` : ''}`}
       style={({ pressed }) => [
-        styles.card,
         styles.archivedRow,
-        { backgroundColor: theme.glassCard, borderColor: theme.glassBorder, boxShadow: Elevation.card },
-        pressed && { opacity: 0.75 },
+        { backgroundColor: pressed ? theme.backgroundSelected : 'transparent' },
       ]}>
+      <View style={[styles.hairline, { backgroundColor: theme.separator }]} />
       <View style={[styles.archivedIcon, { backgroundColor: theme.glassStrong }]}>
         <Icon
           name={open ? 'chevron.left' : 'archivebox.fill'}
@@ -726,6 +754,9 @@ function ContactsRow({ chats, myUid, profiles }: {
 }) {
   const { others } = useStories();
   const [sheet, setSheet] = useState(false);
+  const [personMenu, setPersonMenu] = useState<{ otherId: string; name: string } | null>(null);
+  const mutedStories = useStoryPrefs(myUid)?.mutedStories ?? [];
+  const menuMuted = !!personMenu && mutedStories.includes(personMenu.otherId);
   const people = new Map<string, RowPerson>();
   for (const chat of chats) {
     const otherId = otherMemberId(chat, myUid);
@@ -743,7 +774,7 @@ function ContactsRow({ chats, myUid, profiles }: {
 
   async function pickPhoto(source: 'library' | 'camera') {
     try {
-      const image = await pickImage(source, 1080);
+      const image = await pickStoryImage(source);
       if (!image) return;
       setStoryDraft(image);
       router.push({ pathname: '/story/new', params: { mode: 'photo' } });
@@ -763,9 +794,47 @@ function ContactsRow({ chats, myUid, profiles }: {
             myUid={myUid}
             profile={profiles[person.otherId]}
             queue={unseenQueue.filter((id) => id !== person.otherId)}
+            storiesMuted={mutedStories.includes(person.otherId)}
+            onMenu={(name) => setPersonMenu({ otherId: person.otherId, name })}
           />
         ))}
       </ScrollView>
+      <ActionSheet
+        visible={!!personMenu}
+        title={personMenu?.name}
+        onClose={() => setPersonMenu(null)}
+        options={[
+          {
+            label: 'Open Chat',
+            icon: 'bubble.left.fill',
+            fallback: '💬',
+            onPress: () => {
+              if (!personMenu) return;
+              router.push({
+                pathname: '/chat/[id]',
+                params: { id: chatIdFor(myUid, personMenu.otherId), otherId: personMenu.otherId, name: personMenu.name },
+              });
+            },
+          },
+          {
+            label: menuMuted ? 'Unmute Stories' : 'Mute Stories',
+            icon: menuMuted ? 'speaker.wave.2.fill' : 'speaker.slash.fill',
+            fallback: menuMuted ? '🔊' : '🔇',
+            onPress: () => {
+              if (!personMenu) return;
+              const { otherId, name } = personMenu;
+              setStoriesMuted(myUid, otherId, !menuMuted).then(
+                () =>
+                  toast.success(
+                    menuMuted ? `You'll see ${name}'s stories again` : `${name}'s stories are hidden`,
+                    menuMuted ? 'speaker.wave.2.fill' : 'speaker.slash.fill'
+                  ),
+                () => toast.error('Could not change it. Try again.')
+              );
+            },
+          },
+        ]}
+      />
       <ActionSheet
         visible={sheet}
         title="Add to your story"
@@ -827,11 +896,15 @@ function MyStoryBubble({ myUid, onAdd }: { myUid: string; onAdd: () => void }) {
   );
 }
 
-function ContactBubble({ person, myUid, profile, queue }: {
+function ContactBubble({ person, myUid, profile, queue, storiesMuted, onMenu }: {
   person: RowPerson;
   myUid: string;
   profile: UserProfile | undefined;
   queue: string[];
+  /** I muted their stories (they show without a ring) */
+  storiesMuted: boolean;
+  /** long press: Open Chat / Mute Stories */
+  onMenu: (name: string) => void;
 }) {
   const theme = useTheme();
   const { bubbleColor } = useAppearance();
@@ -850,10 +923,13 @@ function ContactBubble({ person, myUid, profile, queue }: {
   return (
     <ScalePressable
       onPress={story ? openStory : openChat}
-      onLongPress={story ? openChat : undefined}
+      onLongPress={() => {
+        haptics.medium();
+        onMenu(name);
+      }}
       accessibilityRole="button"
-      accessibilityLabel={`${name}${story ? (story.unseen ? ', new story' : ', story') : ''}${online ? ', active now' : ''}`}
-      accessibilityHint={story ? 'Plays their story. Long press to open the chat.' : undefined}
+      accessibilityLabel={`${name}${story ? (story.unseen ? ', new story' : ', story') : ''}${storiesMuted ? ', stories muted' : ''}${online ? ', active now' : ''}`}
+      accessibilityHint="Long press to open the chat or mute their stories."
       style={styles.contact}>
       <View>
         <PulseRing
@@ -932,20 +1008,17 @@ const styles = StyleSheet.create({
   section: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 22, paddingTop: 14, paddingBottom: 4 },
   sectionTitle: { ...Type.footnote, fontWeight: '700', letterSpacing: 0.6 },
   sectionCount: { ...Type.footnote, opacity: 0.7 },
-  card: {
-    marginHorizontal: 12,
-    marginVertical: 5,
-    borderRadius: Radius.xl,
-    borderWidth: StyleSheet.hairlineWidth,
-    overflow: 'hidden',
-  },
-  unreadBar: { position: 'absolute', left: 0, top: 18, bottom: 18, width: 3, borderRadius: 2 },
+  flex: { flex: 1 },
+  card: { overflow: 'hidden' },
+  unreadDot: { width: 9, height: 9, borderRadius: 5, marginRight: -4 },
+  // Separator from the text column to the edge (iOS inset), under the avatar it's open.
+  hairline: { position: 'absolute', left: 94, right: 0, bottom: 0, height: StyleSheet.hairlineWidth },
   greeting: { paddingHorizontal: Spacing.three + 4, paddingTop: 4, paddingBottom: 4, gap: 2 },
   greetingTitle: { ...Type.title3, fontWeight: '700' },
   greetingRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   greetingDot: { width: 7, height: 7, borderRadius: 4 },
   greetingSub: { ...Type.subhead },
-  row: { flexDirection: 'row', alignItems: 'center', paddingLeft: 12, gap: 12 },
+  row: { flexDirection: 'row', alignItems: 'center', paddingLeft: 8, gap: 12 },
   rowBody: {
     flex: 1,
     minHeight: 78,
@@ -1015,7 +1088,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 4,
   },
-  archivedRow: { flexDirection: 'row', alignItems: 'center', paddingLeft: 12, gap: 12 },
+  archivedRow: { flexDirection: 'row', alignItems: 'center', paddingLeft: 21, gap: 12 },
   archivedIcon: { width: 56, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   archivedBody: {
     flex: 1,

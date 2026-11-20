@@ -75,7 +75,7 @@ export function ImageContent({ chatId, mediaId, mime, width, height, thumb, onLo
         ) : (
           <View
             style={[styles.placeholder, { width: w, height: h, backgroundColor: theme.backgroundElement }]}>
-            {thumb && !failed ? (
+            {thumb ? (
               <Image
                 source={{ uri: `data:image/jpeg;base64,${thumb}` }}
                 style={StyleSheet.absoluteFill}
@@ -84,7 +84,8 @@ export function ImageContent({ chatId, mediaId, mime, width, height, thumb, onLo
               />
             ) : null}
             {failed ? (
-              <Text style={{ color: theme.textSecondary }}>Photo unavailable</Text>
+              // Missing photo: cleared in Settings → Storage, or never uploaded.
+              <Text style={{ color: thumb ? '#fff' : theme.textSecondary, fontWeight: '600' }}>Photo unavailable</Text>
             ) : (
               <ActivityIndicator color={thumb ? '#fff' : undefined} />
             )}

@@ -1,6 +1,7 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNetInfo } from '@react-native-community/netinfo';
-import { useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInUp, FadeOutUp } from 'react-native-reanimated';
 
 import { Icon } from '@/components/icon';
@@ -9,6 +10,7 @@ import { authErrorMessage, useAuth } from '@/context/auth';
 import { useTheme } from '@/hooks/use-theme';
 import { haptics } from '@/lib/haptics';
 import { getWebPushState } from '@/lib/push';
+import { updateRequired, useRemoteConfig } from '@/lib/remote-config';
 
 /**
  * iPhone Safari only: explains how to install the web app, which is required for
@@ -111,6 +113,84 @@ export function VerifyEmailBanner() {
         </Pressable>
         <Pressable onPress={check} hitSlop={8}>
           <Text style={[styles.action, { color: theme.accent }]}>I&apos;ve verified</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+/** This build is older than config/app.minBuildTime: ask for the new one. */
+export function UpdateBanner() {
+  const theme = useTheme();
+  const config = useRemoteConfig();
+  if (Platform.OS === 'web' || !updateRequired(config)) return null;
+  return (
+    <View style={[styles.card, { backgroundColor: theme.backgroundElement, borderColor: theme.accent, borderWidth: 1 }]}>
+      <View style={styles.cardRow}>
+        <Icon name="arrow.down.circle.fill" size={18} color={theme.accent} fallback="⬇" />
+        <Text style={[styles.cardTitle, { color: theme.text }]}>Update iChat</Text>
+      </View>
+      <Text style={[styles.cardText, { color: theme.textSecondary }]}>
+        {config.updateMessage ??
+          'A newer version of iChat is ready. Install the latest build so messages, calls and alerts keep working.'}
+      </Text>
+    </View>
+  );
+}
+
+const BG_ALERTS_KEY = 'ichat.bgAlertsBanner';
+
+/** Opens Android's battery-optimization list (falls back to iChat's app settings). */
+export function openBatterySettings() {
+  Linking.sendIntent('android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS').catch(() =>
+    Linking.openSettings().catch(() => {})
+  );
+}
+
+/**
+ * Android only, until dismissed: many phones (Xiaomi, Oppo, Vivo, Samsung…) stop apps in
+ * the background, and then message / call alerts never arrive.
+ */
+export function BackgroundAlertsBanner() {
+  const theme = useTheme();
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    let cancelled = false;
+    AsyncStorage.getItem(BG_ALERTS_KEY).then(
+      (v) => !cancelled && setShow(v !== 'done'),
+      () => {}
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  if (!show) return null;
+
+  function done() {
+    setShow(false);
+    AsyncStorage.setItem(BG_ALERTS_KEY, 'done').catch(() => {});
+  }
+
+  return (
+    <View style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
+      <View style={styles.cardRow}>
+        <Icon name="bell.badge.fill" size={18} color={theme.accent} fallback="🔔" />
+        <Text style={[styles.cardTitle, { color: theme.text }]}>Get alerts when iChat is closed</Text>
+      </View>
+      <Text style={[styles.cardText, { color: theme.textSecondary }]}>
+        Some phones stop apps in the background. Set Battery to “Unrestricted” (and turn on Autostart if your
+        phone has it) so messages and calls always come through.
+      </Text>
+      <View style={styles.cardActions}>
+        <Pressable onPress={openBatterySettings} hitSlop={8}>
+          <Text style={[styles.action, { color: theme.accent }]}>Battery</Text>
+        </Pressable>
+        <Pressable onPress={() => Linking.openSettings().catch(() => {})} hitSlop={8}>
+          <Text style={[styles.action, { color: theme.accent }]}>App settings</Text>
+        </Pressable>
+        <Pressable onPress={done} hitSlop={8}>
+          <Text style={[styles.action, { color: theme.textSecondary }]}>Done</Text>
         </Pressable>
       </View>
     </View>

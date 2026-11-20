@@ -113,8 +113,9 @@ export default function AppearanceScreen() {
         {BUBBLE_COLORS.map((c) => {
           const selected = c.id === bubble;
           return (
+            // Fixed quarter-width cells: an even grid, also on the last row.
+            <View key={c.id} style={styles.swatchCell}>
             <Pressable
-              key={c.id}
               onPress={() => {
                 haptics.light();
                 setBubble(c.id);
@@ -131,6 +132,7 @@ export default function AppearanceScreen() {
                 ) : null}
               </View>
             </Pressable>
+            </View>
           );
         })}
       </View>
@@ -260,7 +262,8 @@ const styles = StyleSheet.create({
   white: { color: '#fff' },
   header: { fontSize: 13, marginTop: Spacing.four, marginBottom: 6, marginLeft: Spacing.three },
   card: { borderRadius: Radius.md, boxShadow: Elevation.card, padding: Spacing.three },
-  swatches: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between' },
+  swatches: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 12 },
+  swatchCell: { width: '25%', alignItems: 'center' },
   swatchRing: { padding: 3, borderRadius: 24, borderWidth: 2, borderColor: 'transparent' },
   swatch: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   wallpapers: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },

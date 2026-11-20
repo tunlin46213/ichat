@@ -30,6 +30,8 @@ export type PickedImage = {
   height: number;
   /** tiny (~24 px) JPEG shown blurred while the full photo loads */
   thumb?: string;
+  /** small (~360 px) JPEG kept in my story archive after the story expires */
+  preview?: string;
 };
 
 function mediaError(code: string) {
@@ -105,6 +107,22 @@ export async function pickImages(source: 'library' | 'camera', maxSide = 1280) {
   });
 }
 
+/** A photo for a story: the full one, plus a small preview for my private story archive. */
+export async function pickStoryImage(source: 'library' | 'camera'): Promise<PickedImage | null> {
+  const asset = (await launchPicker(source, false))[0];
+  if (!asset) return null;
+  const image = await compress(asset.uri, asset.width, asset.height, 1080);
+  let preview: string | undefined;
+  try {
+    // ~25–40 KB: small enough to keep every story in the free 1 GB.
+    preview = (await compress(asset.uri, asset.width, asset.height, 360, 0.4)).base64;
+    if (preview.length > 80_000) preview = undefined;
+  } catch {
+    preview = undefined;
+  }
+  return { ...image, preview };
+}
+
 /** A ~24 px base64 JPEG (well under 1 KB) for the blur-up placeholder. */
 async function tinyThumb(uri: string, width: number, height: number) {
   try {
@@ -158,7 +176,8 @@ export async function sendMediaMessage(
   const mediaRef = doc(collection(db, 'chats', chatId, 'media'));
   const messageRef = doc(collection(db, 'chats', chatId, 'messages'));
   const batch = writeBatch(db);
-  batch.set(mediaRef, { data: base64, mime, senderId, createdAt: serverTimestamp() });
+  // size: lets Settings → Storage add up usage without downloading the photos.
+  batch.set(mediaRef, { data: base64, mime, senderId, size: base64.length, createdAt: serverTimestamp() });
   batch.set(messageRef, {
     type: media.type,
     text: '',

@@ -1,10 +1,11 @@
 import { auth } from '@/lib/firebase';
-import { pushWorkerUrl } from '@/lib/runtime';
+import { workerUrl } from '@/lib/remote-config';
 
-async function post(path: string, body?: unknown) {
+export async function post(path: string, body?: unknown) {
   const user = auth.currentUser;
-  if (!pushWorkerUrl || !user) throw new Error('Notifications are not configured.');
-  return fetch(`${pushWorkerUrl.replace(/\/$/, '')}${path}`, {
+  const base = workerUrl();
+  if (!base || !user) throw new Error('Notifications are not configured.');
+  return fetch(`${base}${path}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${await user.getIdToken()}`, 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -24,6 +25,11 @@ export function notifyCall(chatId: string, callCid: string, video: boolean) {
   post('/notify', { chatId, body: video ? '📹 Video call' : '📞 Voice call', call: { cid: callCid, video } }).catch(
     (err) => console.warn('Call notify failed', err)
   );
+}
+
+/** Tells my contacts' phones I posted a story (each can turn these alerts off). */
+export function notifyStoryPosted(storyId: string) {
+  post('/story-posted', { storyId }).catch((err) => console.warn('Story notify failed', err));
 }
 
 // ── Bark (lock-screen notifications for the free-Apple-ID build) ──
@@ -61,8 +67,9 @@ export async function testBark() {
 /** Stream Video token for native voice calls (worker → /stream-token). */
 export async function fetchStreamToken() {
   const user = auth.currentUser;
-  if (!pushWorkerUrl || !user) throw new Error('Calls are not configured.');
-  const res = await fetch(`${pushWorkerUrl.replace(/\/$/, '')}/stream-token`, {
+  const base = workerUrl();
+  if (!base || !user) throw new Error('Calls are not configured.');
+  const res = await fetch(`${base}/stream-token`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${await user.getIdToken()}` },
   });

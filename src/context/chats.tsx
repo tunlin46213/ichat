@@ -2,10 +2,10 @@ import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { createContext, use, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { useAuth } from '@/context/auth';
-import { deliverDueScheduled, isChatVisibleTo, unreadFor, type Chat } from '@/lib/chat';
+import { deliverDueScheduled, isChatVisibleTo, markDelivered, unreadFor, type Chat } from '@/lib/chat';
 import { db } from '@/lib/firebase';
 import { syncTrackers } from '@/lib/live-location';
-import { setAppBadge } from '@/lib/push';
+import { getActiveChat, setAppBadge } from '@/lib/push';
 
 type ChatsContextValue = {
   /** null while loading */
@@ -46,6 +46,9 @@ export function ChatsProvider({ children }: { children: ReactNode }) {
     const q = query(collection(db, 'chats'), where('members', 'array-contains', myUid));
     // Last message time per chat, to tell a new message apart from typing/read updates.
     const lastSeenAt = new Map<string, number>();
+    // "Delivered" markers already written (chat → message time), so each new message
+    // costs at most one write, and none when I have read it already.
+    const delivered = new Map<string, number>();
     let initial = true;
     return onSnapshot(
       q,
@@ -66,6 +69,24 @@ export function ChatsProvider({ children }: { children: ReactNode }) {
           incomingListeners.forEach((listener) => listener(chat));
         }
         initial = false;
+        if (!snap.metadata.fromCache) {
+          for (const d of snap.docs) {
+            if (d.metadata.hasPendingWrites) continue;
+            const chat = d.data() as Chat;
+            const at = chat.updatedAt?.toMillis() ?? 0;
+            if (!at || !chat.lastSenderId || chat.lastSenderId === myUid || chat.lastMessage == null) continue;
+            const seen = Math.max(
+              chat.deliveredAt?.[myUid]?.toMillis() ?? 0,
+              chat.lastRead?.[myUid]?.toMillis() ?? 0,
+              delivered.get(d.id) ?? 0
+            );
+            if (at <= seen) continue;
+            delivered.set(d.id, at);
+            // The open chat marks it read right away, which implies delivered.
+            if (d.id === getActiveChat()) continue;
+            markDelivered(d.id, myUid).catch(() => {});
+          }
+        }
         setState({
           uid: myUid,
           chats: snap.docs
@@ -105,7 +126,7 @@ export function ChatsProvider({ children }: { children: ReactNode }) {
         const due = Object.values(chat.scheduled ?? {}).some((s) => !!s?.at && s.at.toMillis() <= now);
         if (!due || busy.has(chat.id)) continue;
         busy.add(chat.id);
-        deliverDueScheduled(chat, now)
+        deliverDueScheduled(chat, myUid, now)
           .catch((err) => console.warn('Could not deliver scheduled message', err))
           .finally(() => busy.delete(chat.id));
       }

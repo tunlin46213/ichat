@@ -4,6 +4,7 @@ import { useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -29,6 +30,9 @@ import { confirmDestructive } from '@/lib/confirm';
 import { haptics } from '@/lib/haptics';
 import { mediaErrorMessage, pickImage, updateAvatar } from '@/lib/media';
 import { enableWebPush, getWebPushState, type WebPushState } from '@/lib/push';
+import { buildLabel } from '@/lib/runtime';
+import { useIsAdmin } from '@/lib/admin';
+import { openBatterySettings } from '@/components/banners';
 
 /** Text prompt: native iOS alert with a field, or the browser prompt on web. */
 function promptText(opts: {
@@ -70,6 +74,7 @@ function showError(err: unknown) {
 
 export default function SettingsScreen() {
   const { user, displayName, logout, updateName, deleteAccount } = useAuth();
+  const isAdmin = useIsAdmin(user?.uid);
   const { blocked } = useBlocks();
   const myProfile = useUserProfile(user?.uid);
   const [pushState, setPushState] = useState<WebPushState>(() => getWebPushState());
@@ -235,6 +240,18 @@ export default function SettingsScreen() {
           label="Starred Messages"
           onPress={() => router.push('/settings/starred' as Href)}
         />
+        <Row
+          icon="internaldrive.fill"
+          iconBg="#5856D6"
+          label="Storage"
+          onPress={() => router.push('/settings/storage' as Href)}
+        />
+        <Row
+          icon="clock.arrow.circlepath"
+          iconBg="#FF9500"
+          label="Story Archive"
+          onPress={() => router.push('/settings/story-archive' as Href)}
+        />
       </Section>
 
       {Platform.OS === 'ios' ? (
@@ -245,6 +262,22 @@ export default function SettingsScreen() {
             label="Lock-Screen Alerts"
             onPress={() => router.push('/settings/notifications' as Href)}
           />
+          <Row
+            icon="moon.fill"
+            iconBg="#5856D6"
+            label="Alert Options"
+            onPress={() => router.push('/settings/quiet-hours' as Href)}
+          />
+        </Section>
+      ) : null}
+
+      {Platform.OS === 'android' ? (
+        <Section
+          title="NOTIFICATIONS"
+          footer="If alerts stop when iChat is closed: set Battery to Unrestricted and turn on Autostart (Xiaomi, Oppo, Vivo, Realme), and keep both Messages and Calls notifications on.">
+          <Row icon="bell.badge.fill" iconBg="#FF3B30" label="Notification Settings" onPress={() => Linking.openSettings().catch(() => {})} />
+          <Row icon="bolt.fill" iconBg="#34C759" label="Battery Optimization" onPress={openBatterySettings} />
+          <Row icon="moon.fill" iconBg="#5856D6" label="Alert Options" onPress={() => router.push('/settings/quiet-hours' as Href)} />
         </Section>
       ) : null}
 
@@ -268,6 +301,21 @@ export default function SettingsScreen() {
               pushState === 'on' ? 'On' : pushState === 'off' ? 'Off' : pushState === 'denied' ? 'Blocked' : 'Unavailable'
             }
             onPress={pushState === 'off' ? turnOnPush : undefined}
+          />
+        </Section>
+      ) : null}
+
+      {isAdmin ? (
+        <Section title="ADMIN" footer="Users, reports, invites and app settings. Opens the web dashboard.">
+          <Row
+            icon="person.badge.key.fill"
+            iconBg="#1C1C1E"
+            label="Admin Dashboard"
+            onPress={() =>
+              Platform.OS === 'web'
+                ? router.push('/admin' as Href)
+                : toast.info('Open iChat in a browser and go to /admin.')
+            }
           />
         </Section>
       ) : null}
@@ -306,6 +354,7 @@ export default function SettingsScreen() {
 
       <Text style={[styles.footer, { color: theme.textSecondary }]}>
         iChat {Constants.expoConfig?.version ?? ''}
+        {buildLabel() ? ` (${buildLabel()})` : ''}
       </Text>
 
       <ActionSheet
@@ -333,7 +382,10 @@ function Section({ title, footer, children }: {
   return (
     <View>
       <Text style={[styles.sectionHeader, { color: theme.textSecondary }]}>{title}</Text>
-      <View style={[styles.card, { backgroundColor: theme.glassCard, borderColor: theme.glassBorder }]}>{children}</View>
+      <View style={[styles.card, { backgroundColor: theme.glassCard, borderColor: theme.glassBorder }]}>
+        {/* Pulled 1pt under the card's clipped edge: hides the last row's separator. */}
+        <View style={styles.lastRowClip}>{children}</View>
+      </View>
       {footer ? (
         <Text style={[styles.sectionFooter, { color: theme.textSecondary }]}>{footer}</Text>
       ) : null}
@@ -421,6 +473,7 @@ const styles = StyleSheet.create({
   },
   profileName: { fontSize: 24, fontWeight: '700', letterSpacing: -0.3, flexShrink: 1 },
   profileEmail: { fontSize: 15 },
+  lastRowClip: { marginBottom: -1 },
   sectionHeader: { ...Type.footnote, letterSpacing: 0.2, marginTop: Spacing.three, marginBottom: 6, marginLeft: Spacing.three },
   sectionFooter: { fontSize: 13, lineHeight: 18, marginTop: 6, marginHorizontal: Spacing.three },
   cell: { flexDirection: 'row', alignItems: 'center', paddingLeft: Spacing.three, gap: 12 },

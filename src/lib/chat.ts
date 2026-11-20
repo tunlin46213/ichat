@@ -31,6 +31,8 @@ export type Chat = {
   updatedAt: Timestamp | null;
   /** Per-user "deleted at" time. Hides the chat (and older messages) for that user only. */
   hiddenAt?: Record<string, Timestamp | null>;
+  /** When each member's app last received the chat's newest message ("Delivered" ✓✓). */
+  deliveredAt?: Record<string, Timestamp | null>;
   /** When each member last read the chat (drives "Read" receipts). */
   lastRead?: Record<string, Timestamp | null>;
   /** Unread message count per member (drives the badges). */
@@ -113,11 +115,14 @@ export type Message = {
   deleted?: boolean;
   /** true until the server has saved it (local, optimistic copy) */
   pending?: boolean;
+  /** local only: the server refused it or it never got out (lib/outbox.ts) */
+  failed?: boolean;
 };
 
 export const REACTIONS = ['❤️', '👍', '😂', '😮', '😢', '🙏'] as const;
 
-const TYPING_FRESH_MS = 6000;
+// The composer re-signals every 4 s while typing (fewer Firestore writes on the free plan).
+const TYPING_FRESH_MS = 8000;
 const GROUP_GAP_MS = 15 * 60 * 1000;
 
 /** 1:1 chat id: both user ids sorted and joined, so a pair always maps to one chat. */
@@ -179,10 +184,11 @@ export async function sendMessage(
   recipientId: string,
   text: string,
   replyTo?: ReplyRef | null,
-  { forwarded = false } = {}
+  { forwarded = false, id }: { forwarded?: boolean; id?: string } = {}
 ) {
   const batch = writeBatch(db);
-  const ref = doc(collection(db, 'chats', chatId, 'messages'));
+  // A known id (lib/outbox.ts) makes a retry overwrite rather than duplicate.
+  const ref = id ? messageRef(chatId, id) : doc(collection(db, 'chats', chatId, 'messages'));
   batch.set(ref, {
     text,
     senderId,
@@ -330,6 +336,16 @@ export function previewFor(
     default:
       return message.text;
   }
+}
+
+/** A fresh id for a message that isn't written yet (outbox). */
+export function newMessageId(chatId: string) {
+  return doc(collection(db, 'chats', chatId, 'messages')).id;
+}
+
+/** My app has received this chat's newest message (their ✓✓ "Delivered"). */
+export function markDelivered(chatId: string, myUid: string) {
+  return updateDoc(chatRef(chatId), { [`deliveredAt.${myUid}`]: serverTimestamp() });
 }
 
 /** Clears my unread count and moves my read marker to now. */
@@ -597,13 +613,13 @@ export function isScheduledPending(message: Message, now: number) {
  * Delivers any scheduled messages in this chat whose time has come. Safe to call from
  * both phones at once: a transaction makes sure each one is delivered only once.
  */
-export async function deliverDueScheduled(chat: Chat, now = Date.now()) {
+export async function deliverDueScheduled(chat: Chat, myUid: string, now = Date.now()) {
   const due = Object.entries(chat.scheduled ?? {}).filter(([, s]) => !!s?.at && s.at.toMillis() <= now);
   for (const [id] of due) {
-    await runTransaction(db, async (tx) => {
+    const delivered = await runTransaction(db, async (tx) => {
       const snap = await tx.get(chatRef(chat.id));
       const entry = (snap.get('scheduled') as Chat['scheduled'])?.[id];
-      if (!entry) return; // already delivered (or cancelled)
+      if (!entry) return null; // already delivered (or cancelled)
       const members = (snap.get('members') as string[]) ?? [];
       const recipient = members.find((m) => m !== entry.senderId) ?? '';
       const updatedAt = snap.get('updatedAt') as Timestamp | null;
@@ -614,7 +630,12 @@ export async function deliverDueScheduled(chat: Chat, now = Date.now()) {
         // Don't replace the preview with an older message.
         ...(newer ? {} : { lastMessage: entry.preview, lastSenderId: entry.senderId, updatedAt: entry.at }),
       });
+      return entry;
     });
+    // Alert them now, like a normal send. Only from the sender's phone: the worker
+    // notifies "the other member" of whoever calls it. (If their own phone delivered
+    // it, iChat is open there and shows it already.)
+    if (delivered && delivered.senderId === myUid) notifyRecipient(chat.id, delivered.preview);
   }
 }
 

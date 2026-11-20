@@ -48,6 +48,11 @@ function RootNavigator() {
     if (Platform.OS === 'web' || !signedIn) return;
     const open = (response: Notifications.NotificationResponse) => {
       const data = response.notification.request.content.data as Partial<ChatNotificationData>;
+      // "Bae posted a story" (Android): play their stories.
+      if (data?.story) {
+        router.push({ pathname: '/story/[uid]', params: { uid: data.story } });
+        return;
+      }
       if (!data?.chatId || !data.otherId) return;
       router.push({
         pathname: '/chat/[id]',
@@ -116,6 +121,8 @@ function RootNavigator() {
           name="user/[id]"
           options={{ headerShown: true, presentation: 'modal', title: '' }}
         />
+        {/* Web admin dashboard (admins only; the page itself checks config/admins). */}
+        <Stack.Screen name="admin" />
       </Stack.Protected>
       <Stack.Protected guard={!user}>
         <Stack.Screen name="login" />

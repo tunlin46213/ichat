@@ -13,11 +13,14 @@ import {
 } from 'firebase/auth';
 import { deleteDoc, doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { createContext, use, useEffect, useState, type ReactNode } from 'react';
-import { AppState } from 'react-native';
+import { AppState, Platform } from 'react-native';
 
 import { auth, db } from '@/lib/firebase';
+import { runBeforeLogout } from '@/lib/logout-hooks';
 import { saveBark } from '@/lib/notify';
+import { refreshRemoteConfig } from '@/lib/remote-config';
 import { registerForPush, unregisterPush } from '@/lib/push';
+import { buildSha, buildTime } from '@/lib/runtime';
 
 const HEARTBEAT_MS = 60_000;
 
@@ -87,11 +90,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!uid) return;
     // Ask for notification permission and save this device's push token.
     registerForPush(uid);
+    // Worker URL / minimum build from Firestore config/app (no rebuild needed to change them).
+    refreshRemoteConfig();
     // `inApp` tells the push worker to skip Bark notifications while I'm looking at iChat
     // (the in-app banner covers that). The worker also ignores it once lastSeen is stale.
     const beat = () => {
       if (AppState.currentState !== 'active') return;
-      setDoc(doc(db, 'users', uid), { lastSeen: serverTimestamp(), inApp: true }, { merge: true }).catch(
+      setDoc(
+        doc(db, 'users', uid),
+        // `apps.<platform>`: which build runs on each of this person's devices (admin
+        // dashboard). Per platform, so opening the web dashboard doesn't hide the phone.
+        {
+          lastSeen: serverTimestamp(),
+          inApp: true,
+          apps: { [Platform.OS]: { build: buildSha, buildTime, at: serverTimestamp() } },
+        },
+        { merge: true }
+      ).catch(
         () => {}
       );
     };
@@ -103,6 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       if (state !== 'active') return;
       beat();
+      refreshRemoteConfig();
       // Picks up email verification done in the mail app while we were away.
       const current = auth.currentUser;
       if (current && !current.emailVerified) {
@@ -136,14 +152,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await updateProfile(cred.user, { displayName: cleanName });
     // Public profile used by the user list. Email is intentionally not stored here,
     // because every signed-in user can read this collection.
-    await setDoc(doc(db, 'users', cred.user.uid), {
-      name: cleanName,
-      nameLower: cleanName.toLowerCase(),
-      avatarUrl: null,
-      acceptedTermsAt: serverTimestamp(),
-      createdAt: serverTimestamp(),
-      lastSeen: serverTimestamp(),
-    });
+    try {
+      await setDoc(doc(db, 'users', cred.user.uid), {
+        name: cleanName,
+        nameLower: cleanName.toLowerCase(),
+        avatarUrl: null,
+        acceptedTermsAt: serverTimestamp(),
+        createdAt: serverTimestamp(),
+        lastSeen: serverTimestamp(),
+      });
+    } catch (err) {
+      // Invite-only (config/invites): the rules refuse emails that aren't on the list.
+      // Remove the sign-in account again so the email can register once it's invited.
+      if ((err as { code?: string })?.code === 'permission-denied') {
+        setNeedsOnboarding(false);
+        await deleteUser(cred.user).catch(() => signOut(auth));
+        throw Object.assign(new Error('not invited'), { code: 'auth/not-invited' });
+      }
+      throw err;
+    }
     // Not awaited: a slow or failed email must not block sign-up.
     sendEmailVerification(cred.user).catch((err) =>
       console.warn('Could not send verification email', err)
@@ -153,6 +180,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function logout() {
     setNeedsOnboarding(false);
     if (auth.currentUser) {
+      // e.g. Android: stop Stream from ringing this phone for the account.
+      await runBeforeLogout();
       await unregisterPush(auth.currentUser.uid);
       // This phone shouldn't keep getting Bark alerts for an account that left it.
       await saveBark({ key: null }).catch(() => {});
@@ -192,6 +221,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       current,
       EmailAuthProvider.credential(current.email, password)
     );
+    await runBeforeLogout();
     await deleteDoc(doc(db, 'users', current.uid));
     await deleteUser(current);
   }
@@ -247,6 +277,10 @@ export function authErrorMessage(err: unknown): string {
       return 'Email/Password sign-in is not enabled in the Firebase console.';
     case 'auth/requires-recent-login':
       return 'For security, please log out and log in again, then retry.';
+    case 'auth/not-invited':
+      return 'iChat is invite-only. Ask the admin to add your email, then register again.';
+    case 'auth/user-disabled':
+      return 'This account has been turned off by the admin.';
     case 'auth/missing-email':
       return 'Enter your email address.';
     case 'name-too-long':

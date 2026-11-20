@@ -1,11 +1,14 @@
 import {
   collection,
+  deleteDoc,
   deleteField,
   doc,
   getDoc,
   getDocs,
+  orderBy,
   query,
   serverTimestamp,
+  setDoc,
   Timestamp,
   updateDoc,
   where,
@@ -18,8 +21,9 @@ import type { PickedImage } from '@/lib/media';
 /*
  * 24-hour stories. Metadata lives in stories/{id} (small, listened to live); the photo
  * itself is in storyMedia/{id} (base64, loaded only when viewed), like chat media.
- * There are no Cloud Functions on the free plan, so expired stories are hidden by the
- * app and each owner's phone deletes its own old ones when the app starts.
+ * Expired ones are hidden by the app, deleted every hour by the push worker's cron
+ * (worker/src/index.ts → scheduled), and also by the owner's phone at start-up.
+ * A small copy goes to the owner's private archive (users/{uid}/storyArchive/{id}).
  */
 
 export const STORY_TTL_MS = 24 * 60 * 60 * 1000;
@@ -80,9 +84,34 @@ export function takeStoryDraft() {
   return draft;
 }
 
+export type ArchivedStory = {
+  id: string;
+  kind: 'photo' | 'text';
+  text?: string;
+  background?: StoryBackgroundId;
+  /** small JPEG (photo stories) */
+  preview?: string;
+  width?: number;
+  height?: number;
+  createdAt: Timestamp | null;
+};
+
+const archiveRef = (uid: string, id: string) => doc(db, 'users', uid, 'storyArchive', id);
+
+/**
+ * Keeps a copy in my archive. Separate from posting on purpose: if the archive can't be
+ * written (offline, older database rules), the story still goes out.
+ */
+function archive(uid: string, id: string, data: Omit<ArchivedStory, 'id' | 'createdAt'>) {
+  setDoc(archiveRef(uid, id), { ...data, createdAt: serverTimestamp() }).catch((err) =>
+    console.warn('Could not archive the story', err?.code)
+  );
+}
+
 export async function postPhotoStory(uid: string, image: PickedImage, caption: string) {
   const batch = writeBatch(db);
   const ref = doc(collection(db, 'stories'));
+
   batch.set(doc(db, 'storyMedia', ref.id), {
     ownerId: uid,
     data: image.base64,
@@ -98,11 +127,20 @@ export async function postPhotoStory(uid: string, image: PickedImage, caption: s
     expiresAt: Timestamp.fromMillis(Date.now() + STORY_TTL_MS),
   });
   await batch.commit();
+  archive(uid, ref.id, {
+    kind: 'photo',
+    ...(caption.trim() ? { text: caption.trim().slice(0, 300) } : {}),
+    ...(image.preview ? { preview: image.preview } : {}),
+    width: image.width,
+    height: image.height,
+  });
+  return ref.id;
 }
 
 export async function postTextStory(uid: string, text: string, background: StoryBackgroundId) {
   const batch = writeBatch(db);
-  batch.set(doc(collection(db, 'stories')), {
+  const ref = doc(collection(db, 'stories'));
+  batch.set(ref, {
     ownerId: uid,
     kind: 'text',
     text: text.trim().slice(0, 300),
@@ -111,6 +149,23 @@ export async function postTextStory(uid: string, text: string, background: Story
     expiresAt: Timestamp.fromMillis(Date.now() + STORY_TTL_MS),
   });
   await batch.commit();
+  archive(uid, ref.id, { kind: 'text', text: text.trim().slice(0, 300), background });
+  return ref.id;
+}
+
+/** My archive, newest first. */
+export async function loadStoryArchive(uid: string) {
+  const snap = await getDocs(query(collection(db, 'users', uid, 'storyArchive'), orderBy('createdAt', 'desc')));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as ArchivedStory);
+}
+
+export function deleteArchivedStory(uid: string, id: string) {
+  return deleteDoc(archiveRef(uid, id));
+}
+
+/** Loads the photos of the next stories ahead of time, so they show without a wait. */
+export function prefetchStoryPhotos(stories: (Story | undefined)[]) {
+  for (const s of stories) if (s?.kind === 'photo') loadStoryPhoto(s.id).catch(() => {});
 }
 
 /** Sets my emoji on a story, or removes it with null. */

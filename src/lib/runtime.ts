@@ -12,7 +12,10 @@ export const easProjectId: string | undefined =
 export const streamApiKey: string | undefined =
   Constants.expoConfig?.extra?.streamApiKey || undefined;
 
-/** Cloudflare Worker that sends push notifications (worker/). Empty = push off. */
+/**
+ * Cloudflare Worker that sends push notifications (worker/). Empty = push off.
+ * Only the fallback: the live URL comes from Firestore config/app (lib/remote-config.ts).
+ */
 export const pushWorkerUrl: string | undefined =
   Constants.expoConfig?.extra?.pushWorkerUrl || undefined;
 
@@ -28,4 +31,15 @@ export function callsUnavailableReason() {
   if (isExpoGo) return 'Calls need the iChat app build. They are not available in Expo Go.';
   if (!streamApiKey) return 'Calls are not set up yet (missing Stream API key).';
   return null;
+}
+
+/** When this build's code was committed (unix seconds; app.config.js). null in odd setups. */
+export const buildTime: number | null = Number(Constants.expoConfig?.extra?.buildTime) || null;
+export const buildSha: string | null = Constants.expoConfig?.extra?.buildSha || null;
+
+/** "build 20 Nov · 494e41e" for Settings. */
+export function buildLabel() {
+  if (!buildTime) return null;
+  const date = new Date(buildTime * 1000).toLocaleDateString([], { day: 'numeric', month: 'short' });
+  return buildSha ? `build ${date} · ${buildSha}` : `build ${date}`;
 }

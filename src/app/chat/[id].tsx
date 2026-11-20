@@ -98,6 +98,7 @@ import { startTracking } from '@/lib/live-location';
 import { getCurrentCoords, locationErrorMessage } from '@/lib/location';
 import { dismissMemory, findMemory, type Memory } from '@/lib/memories';
 import { mediaErrorMessage, pickImages, sendMediaMessage } from '@/lib/media';
+import { discard, failedReason, retry, sendText, useFailedMessages, verifyLeftovers } from '@/lib/outbox';
 import { setActiveChat } from '@/lib/push';
 import { suggestReplies } from '@/lib/smart-replies';
 import { playSendSound } from '@/lib/sounds';
@@ -107,13 +108,6 @@ import { isStarred, starMessage, unstarMessage, useStarred } from '@/lib/starred
 function showAlert(title: string, message: string) {
   if (Platform.OS === 'web') window.alert(`${title}\n\n${message}`);
   else Alert.alert(title, message);
-}
-
-/** A rejected send usually means the other person blocked me (rules check their block list). */
-function sendErrorMessage(err: unknown, otherName: string) {
-  const code = (err as { code?: string }).code ?? 'error';
-  if (code === 'permission-denied') return `Message not delivered. ${otherName} may not be accepting messages.`;
-  return `Message not sent (${code}).`;
 }
 
 const PAGE_SIZE = 50;
@@ -174,6 +168,9 @@ function ChatScreen() {
   const [ready, setReady] = useState(false);
   const [chat, setChat] = useState<Chat | null>(null);
   const [messages, setMessages] = useState<Message[] | null>(null);
+  const failedMessages = useFailedMessages(id);
+  const failedIds = new Set(failedMessages.map((m) => m.id));
+  const [failedMenu, setFailedMenu] = useState<Message | null>(null);
   const [pageSize, setPageSize] = useState(PAGE_SIZE);
   const [error, setError] = useState<string | null>(null);
   const [replyTo, setReplyTo] = useState<ReplyRef | null>(null);
@@ -298,18 +295,32 @@ function ChatScreen() {
   }, [ready, id, memoryHiddenBefore]);
 
   // Mark as read on open, whenever new messages arrive, and when the app returns.
+  // Writes only when something is unread (plus once on open): my own markRead bringing
+  // the count back to 0 used to trigger a second, useless write for every new message.
   const myUnread = chat?.unread?.[myUid] ?? 0;
+  const markedOnOpen = useRef(false);
+  const unreadRef = useRef(myUnread);
+  useEffect(() => {
+    unreadRef.current = myUnread;
+  });
   useEffect(() => {
     if (!ready || AppState.currentState !== 'active') return;
+    if (markedOnOpen.current && myUnread === 0) return;
+    markedOnOpen.current = true;
     markRead(id, myUid).catch(() => {});
   }, [ready, id, myUid, myUnread]);
   useEffect(() => {
     if (!ready) return;
     const sub = AppState.addEventListener('change', (s) => {
-      if (s === 'active') markRead(id, myUid).catch(() => {});
+      if (s === 'active' && unreadRef.current > 0) markRead(id, myUid).catch(() => {});
     });
     return () => sub.remove();
   }, [ready, id, myUid]);
+
+  // Messages from an earlier run that never got a server confirmation.
+  useEffect(() => {
+    if (ready) verifyLeftovers(id);
+  }, [ready, id]);
 
   useEffect(
     () => () => {
@@ -361,16 +372,12 @@ function ChatScreen() {
     const reply = replyTo;
     setReplyTo(null);
     playSendSound();
-    try {
-      await sendMessage(id, myUid, otherId, text, reply);
-      listRef.current?.scrollToOffset({ offset: 0, animated: true });
-      return true;
-    } catch (err) {
-      haptics.error();
-      setReplyTo(reply);
-      setError(sendErrorMessage(err, otherName));
-      return false;
-    }
+    // Don't wait for the server: offline, that wait lasts until the connection is back
+    // and the composer stayed locked. Firestore shows the message at once (🕓), and the
+    // outbox turns a refused or lost send into a "Not delivered — Retry" bubble.
+    sendText(id, myUid, otherId, text, reply);
+    listRef.current?.scrollToOffset({ offset: 0, animated: true });
+    return true;
   }
 
   // ── Voice / video calls ──
@@ -489,6 +496,11 @@ function ChatScreen() {
 
   // ── Long-press menu actions ──
   function openMenu(message: Message, anchor?: MenuAnchor) {
+    if (message.failed) {
+      haptics.medium();
+      setFailedMenu(message);
+      return;
+    }
     if (message.pending) return;
     if (message.senderId === myUid && isScheduledPending(message, Date.now())) {
       haptics.medium();
@@ -611,13 +623,17 @@ function ChatScreen() {
 
   // If I deleted this chat earlier, only show messages that came after.
   const hiddenBefore = chat?.hiddenAt?.[myUid]?.toMillis() ?? 0;
-  const visible =
+  const shown =
     messages?.filter(
       (m) =>
         (!hiddenBefore || (m.createdAt?.toMillis() ?? Infinity) > hiddenBefore) &&
         // Their scheduled messages stay hidden until the send time.
-        !(m.senderId !== myUid && m.scheduled && (m.createdAt?.toMillis() ?? 0) > listNow)
+        !(m.senderId !== myUid && m.scheduled && (m.createdAt?.toMillis() ?? 0) > listNow) &&
+        // An undelivered one is drawn from the outbox instead (with Retry).
+        !failedIds.has(m.id)
     ) ?? null;
+  // Undelivered messages sit at the bottom (newest), marked "Not delivered".
+  const visible = shown ? [...failedMessages, ...shown] : null;
   const countdowns = upcomingCountdowns(chat, listNow);
   const hasMessages = !!visible && visible.length > 0;
   const otherTyping = isTyping(chat, otherId);
@@ -625,10 +641,13 @@ function ChatScreen() {
   // Their color (from their avatar palette) tints this chat: header ring and glow.
   const contactTint = colorsFor(otherId ?? '')[1];
   const otherReadAt = chat?.lastRead?.[otherId]?.toMillis() ?? 0;
+  // Read implies delivered; their app marks delivery when a message reaches it.
+  const otherDeliveredAt = Math.max(otherReadAt, chat?.deliveredAt?.[otherId]?.toMillis() ?? 0);
   // Messenger-style "seen" avatar sits under my newest message they have read.
   const lastReadMineId =
     visible?.find(
-      (m) => m.senderId === myUid && !m.pending && (m.createdAt?.toMillis() ?? Infinity) <= otherReadAt
+      (m) =>
+        m.senderId === myUid && !m.pending && !m.failed && (m.createdAt?.toMillis() ?? Infinity) <= otherReadAt
     )?.id ?? null;
   // Photos for the viewer, oldest first so swiping right goes forward in time.
   const photos = (visible ?? []).filter((m) => m.type === 'image' && m.mediaId && !m.deleted).reverse();
@@ -954,7 +973,8 @@ function ChatScreen() {
                     myUid={myUid}
                     otherName={otherName}
                     starred={isStarred(starred, id, item.id)}
-                    read={mine && !item.pending && sentAt <= otherReadAt}
+                    read={mine && !item.pending && !item.failed && sentAt <= otherReadAt}
+                    delivered={mine && !item.pending && !item.failed && sentAt <= otherDeliveredAt}
                     avatar={{ id: otherId, name: otherName, uri: profile?.avatarUrl }}
                     scheduledFor={
                       mine && isScheduledPending(item, listNow) && item.createdAt
@@ -1129,6 +1149,38 @@ function ChatScreen() {
           }}
         />
       ) : null}
+
+      <ActionSheet
+        visible={!!failedMenu}
+        title={failedMenu ? failedReason(failedMenu.id) : undefined}
+        onClose={() => setFailedMenu(null)}
+        options={[
+          {
+            label: 'Try Again',
+            icon: 'arrow.clockwise',
+            fallback: '↻',
+            onPress: () => {
+              if (failedMenu) retry(failedMenu.id);
+            },
+          },
+          {
+            label: 'Copy Text',
+            icon: 'doc.on.doc',
+            fallback: '⧉',
+            onPress: () => {
+              if (failedMenu) Clipboard.setStringAsync(failedMenu.text).then(() => toast.success('Copied', 'doc.on.doc'));
+            },
+          },
+          {
+            label: 'Delete',
+            icon: 'trash.fill',
+            fallback: '🗑',
+            onPress: () => {
+              if (failedMenu) discard(failedMenu.id);
+            },
+          },
+        ]}
+      />
 
       <ActionSheet
         visible={!!scheduledMenu}

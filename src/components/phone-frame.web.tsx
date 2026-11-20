@@ -1,5 +1,6 @@
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { usePathname } from 'expo-router';
 import type { ReactNode } from 'react';
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
@@ -21,7 +22,9 @@ const FRAME_INSETS = { top: 0, bottom: HOME_INDICATOR, left: 0, right: 0 };
 export function PhoneFrame({ children }: { children: ReactNode }) {
   const { width, height } = useWindowDimensions();
   const dark = useColorScheme() === 'dark';
-  const framed = width > PHONE_WIDTH + 40 && height > 640;
+  // The admin dashboard is a desktop page: no phone frame around it.
+  const desktopPage = usePathname().startsWith('/admin');
+  const framed = !desktopPage && width > PHONE_WIDTH + 40 && height > 640;
 
   if (!framed) return <View style={styles.fill}>{children}</View>;
 

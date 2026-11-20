@@ -16,3 +16,7 @@ APP_URL = "https://ichat-2a37f.web.app"
 [[kv_namespaces]]
 binding = "BARK"
 id = "edc6ed9dfcdc4b518864a7ac524ca899"
+
+# Hourly: delete expired stories and their photos (src/index.ts → scheduled).
+[triggers]
+crons = ["0 * * * *"]
