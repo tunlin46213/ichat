@@ -69,10 +69,8 @@ export function MomentCard({ moment, myUid, profiles, now, onOpen }: {
       confirmLabel: 'Delete',
       onConfirm: () =>
         deleteMoment(moment).then(
-          () => {
-            toast.success('Moment deleted', 'trash.fill');
-            if (!onOpen) router.back();
-          },
+          // On the moment's own page, its "deleted" effect leaves the screen.
+          () => toast.success('Moment deleted', 'trash.fill'),
           () => toast.error('Could not delete it. Try again.')
         ),
     });
@@ -140,7 +138,17 @@ export function MomentCard({ moment, myUid, profiles, now, onOpen }: {
 /** 1 photo: as it is (capped); 2 and 4: two columns; otherwise three. */
 function PhotoGrid({ photos, onOpen }: { photos: MomentPhoto[]; onOpen: (i: number) => void }) {
   const { width } = useWindowDimensions();
-  const full = Math.min(width, 640) - Spacing.three * 2 - Spacing.three * 2;
+  // Measured, not the window: on web the app sits in a phone frame narrower than the window.
+  const [measured, setMeasured] = useState(0);
+  const full = measured || Math.min(width, 640) - Spacing.three * 4;
+  return (
+    <View onLayout={(e) => setMeasured(Math.floor(e.nativeEvent.layout.width))}>
+      <PhotoGridContent photos={photos} full={full} onOpen={onOpen} />
+    </View>
+  );
+}
+
+function PhotoGridContent({ photos, full, onOpen }: { photos: MomentPhoto[]; full: number; onOpen: (i: number) => void }) {
   if (photos.length === 1) {
     const p = photos[0];
     const ratio = Math.min(Math.max(p.width / Math.max(p.height, 1), 0.66), 1.6);

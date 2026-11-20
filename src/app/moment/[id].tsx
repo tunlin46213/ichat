@@ -20,6 +20,7 @@ import { toast } from '@/components/toast';
 import { WebBackButton } from '@/components/web-header';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
+import { useBlocks } from '@/context/blocks';
 import { useNow } from '@/hooks/use-now';
 import { useTheme } from '@/hooks/use-theme';
 import { useUserProfiles } from '@/hooks/use-user-profiles';
@@ -35,7 +36,9 @@ export default function MomentScreen() {
   const { user } = useAuth();
   const myUid = user!.uid;
   const moment = useMoment(id);
-  const comments = useComments(id);
+  const { blocked } = useBlocks();
+  const allComments = useComments(id);
+  const comments = allComments?.filter((c) => !blocked.includes(c.authorId)) ?? null;
   const now = useNow(60_000);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);

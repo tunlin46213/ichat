@@ -1,5 +1,5 @@
-import { router, type Href } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { router, useFocusEffect, type Href } from 'expo-router';
+import { useCallback, useState } from 'react';
 import { ActivityIndicator, FlatList, Platform, StyleSheet, Text, View } from 'react-native';
 
 import { AuroraBackground } from '@/components/aurora';
@@ -33,9 +33,13 @@ export default function MomentsScreen() {
 
   // Seeing the feed clears the "new moments" dot on the tab.
   const newestId = feed?.moments[0]?.id;
-  useEffect(() => {
-    markMomentsSeen();
-  }, [newestId]);
+  // Only while the feed is on screen: the tab stays mounted behind Chats / Settings.
+  useFocusEffect(
+    useCallback(() => {
+      markMomentsSeen();
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- re-mark when a new post arrives while open
+    }, [newestId])
+  );
 
   const compose = () => router.push('/moment/new' as Href);
 

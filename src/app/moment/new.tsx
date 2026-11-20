@@ -13,7 +13,6 @@ import {
   View,
 } from 'react-native';
 
-import { ActionSheet } from '@/components/action-sheet';
 import { Icon } from '@/components/icon';
 import { toast } from '@/components/toast';
 import { Radius, Spacing } from '@/constants/theme';
@@ -29,7 +28,6 @@ export default function NewMomentScreen() {
   const { user } = useAuth();
   const [text, setText] = useState('');
   const [photos, setPhotos] = useState<PickedImage[]>([]);
-  const [adding, setAdding] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [posting, setPosting] = useState(false);
   const canPost = !posting && !preparing && (text.trim().length > 0 || photos.length > 0);
@@ -45,7 +43,8 @@ export default function NewMomentScreen() {
       setPhotos((list) => [...list, ...ready].slice(0, MAX_MOMENT_PHOTOS));
       if (picked.length > room) toast.info(`A moment holds up to ${MAX_MOMENT_PHOTOS} photos.`);
     } catch (err) {
-      toast.error(mediaErrorMessage(err));
+      const code = (err as { code?: string })?.code ?? '';
+      toast.error(code.startsWith('media/') ? mediaErrorMessage(err) : `Could not add the photo (${code || String(err).slice(0, 60)}).`);
     } finally {
       setPreparing(false);
     }
@@ -64,7 +63,7 @@ export default function NewMomentScreen() {
       toast.error(
         code === 'permission-denied'
           ? 'Moments aren’t switched on yet. The admin needs to publish the latest database rules.'
-          : 'Could not share it. Check your connection and try again.'
+          : `Could not share it (${code ?? 'network'}). Check your connection and try again.`
       );
       setPosting(false);
     }
@@ -78,9 +77,11 @@ export default function NewMomentScreen() {
         options={{
           headerShown: true,
           title: 'New Moment',
+          // Leaving mid-post would make the post's own router.back() pop one screen too many.
+          gestureEnabled: !posting,
           headerLeft: () => (
-            <Pressable onPress={() => router.back()} hitSlop={10} accessibilityRole="button">
-              <Text style={[styles.headerButton, { color: theme.accent }]}>Cancel</Text>
+            <Pressable onPress={() => router.back()} disabled={posting} hitSlop={10} accessibilityRole="button">
+              <Text style={[styles.headerButton, { color: posting ? theme.textSecondary : theme.accent }]}>Cancel</Text>
             </Pressable>
           ),
           headerRight: () => (
@@ -123,16 +124,16 @@ export default function NewMomentScreen() {
           ))}
           {photos.length < MAX_MOMENT_PHOTOS ? (
             <Pressable
-              onPress={() => setAdding(true)}
+              onPress={() => addPhotos('library')}
               disabled={preparing}
               accessibilityRole="button"
-              accessibilityLabel="Add photos"
+              accessibilityLabel="Add photos from the library"
               style={[styles.cell, styles.add, { borderColor: theme.separator }]}>
               {preparing ? (
                 <ActivityIndicator />
               ) : (
                 <>
-                  <Icon name="plus" size={26} color={theme.textSecondary} fallback="＋" />
+                  <Icon name="photo.on.rectangle" size={24} color={theme.textSecondary} fallback="🖼" />
                   <Text style={[styles.addText, { color: theme.textSecondary }]}>
                     {photos.length ? `${photos.length}/${MAX_MOMENT_PHOTOS}` : 'Photos'}
                   </Text>
@@ -140,22 +141,21 @@ export default function NewMomentScreen() {
               )}
             </Pressable>
           ) : null}
+          {photos.length < MAX_MOMENT_PHOTOS && Platform.OS !== 'web' && !preparing ? (
+            <Pressable
+              onPress={() => addPhotos('camera')}
+              accessibilityRole="button"
+              accessibilityLabel="Take a photo"
+              style={[styles.cell, styles.add, { borderColor: theme.separator }]}>
+              <Icon name="camera.fill" size={24} color={theme.textSecondary} fallback="📷" />
+              <Text style={[styles.addText, { color: theme.textSecondary }]}>Camera</Text>
+            </Pressable>
+          ) : null}
         </View>
         <Text style={[styles.note, { color: theme.textSecondary }]}>
           Everyone on iChat can see your moments. They stay until you delete them.
         </Text>
       </ScrollView>
-      <ActionSheet
-        visible={adding}
-        title="Add photos"
-        onClose={() => setAdding(false)}
-        options={[
-          ...(Platform.OS !== 'web'
-            ? [{ label: 'Camera', icon: 'camera.fill' as const, fallback: '📷', onPress: () => addPhotos('camera') }]
-            : []),
-          { label: 'Photo Library', icon: 'photo.on.rectangle', fallback: '🖼', onPress: () => addPhotos('library') },
-        ]}
-      />
     </KeyboardAvoidingView>
   );
 }

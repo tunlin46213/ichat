@@ -1,8 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
-  addDoc,
   collection,
-  deleteDoc,
   deleteField,
   doc,
   getDoc,
@@ -15,6 +13,7 @@ import {
   serverTimestamp,
   Timestamp,
   updateDoc,
+  where,
   writeBatch,
 } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
@@ -95,14 +94,25 @@ export async function toggleLike(moment: Moment, uid: string) {
 export async function addComment(momentId: string, authorId: string, text: string) {
   const clean = text.trim().slice(0, MAX_COMMENT_TEXT);
   if (!clean) return;
-  await addDoc(collection(db, 'moments', momentId, 'comments'), { authorId, text: clean, createdAt: serverTimestamp() });
-  await updateDoc(momentRef(momentId), { commentCount: increment(1) }).catch(() => {});
+  // Comment and counter together, so the count never drifts from the comments.
+  const batch = writeBatch(db);
+  batch.set(doc(collection(db, 'moments', momentId, 'comments')), { authorId, text: clean, createdAt: serverTimestamp() });
+  batch.update(momentRef(momentId), { commentCount: increment(1) });
+  await batch.commit();
   notifyMomentActivity(momentId, 'comment', clean);
 }
 
 export async function deleteComment(momentId: string, commentId: string) {
-  await deleteDoc(doc(db, 'moments', momentId, 'comments', commentId));
-  await updateDoc(momentRef(momentId), { commentCount: increment(-1) }).catch(() => {});
+  const batch = writeBatch(db);
+  batch.delete(doc(db, 'moments', momentId, 'comments', commentId));
+  batch.update(momentRef(momentId), { commentCount: increment(-1) });
+  await batch.commit();
+}
+
+/** Account deletion: remove my moments (with their photos and comments). */
+export async function deleteMyMoments(uid: string) {
+  const mine = await getDocs(query(collection(db, 'moments'), where('authorId', '==', uid), limit(200)));
+  for (const d of mine.docs) await deleteMoment({ id: d.id, ...d.data() } as Moment).catch(() => {});
 }
 
 /** "Bae liked / commented on your moment" on the author's phone (push worker). */

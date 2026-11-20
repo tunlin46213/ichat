@@ -18,6 +18,7 @@ import { AppState, Platform } from 'react-native';
 import { auth, db } from '@/lib/firebase';
 import { runBeforeLogout } from '@/lib/logout-hooks';
 import { saveBark } from '@/lib/notify';
+import { deleteMyMoments } from '@/lib/moments';
 import { refreshRemoteConfig } from '@/lib/remote-config';
 import { registerForPush, unregisterPush } from '@/lib/push';
 import { buildSha, buildTime } from '@/lib/runtime';
@@ -222,6 +223,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       EmailAuthProvider.credential(current.email, password)
     );
     await runBeforeLogout();
+    await deleteMyMoments(current.uid).catch(() => {});
     await deleteDoc(doc(db, 'users', current.uid));
     await deleteUser(current);
   }
