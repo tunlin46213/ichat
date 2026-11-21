@@ -53,7 +53,11 @@ export async function forwardMessage(
       await sendLocation(chatId, me.uid, to.uid, { lat: message.lat!, lng: message.lng! }, opts);
       break;
     default:
-      await sendMessage(chatId, me.uid, to.uid, message.text, null, opts);
+      // A shared moment keeps its preview card.
+      await sendMessage(chatId, me.uid, to.uid, message.text, null, {
+        ...opts,
+        ...(message.moment ? { moment: message.moment } : {}),
+      });
   }
   return chatId;
 }

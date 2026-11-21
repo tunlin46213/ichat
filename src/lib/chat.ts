@@ -20,6 +20,8 @@ export type UserProfile = {
   name: string;
   avatarUrl: string | null;
   lastSeen?: Timestamp | null;
+  /** a short line about them (Settings → Bio) */
+  bio?: string;
 };
 
 export type Chat = {
@@ -78,6 +80,18 @@ export type ReplyRef = { id: string; text: string; senderId: string };
 
 export type MessageType = 'text' | 'image' | 'audio' | 'call' | 'location';
 
+/** What a chat message keeps about a shared moment (enough to draw its card). */
+export type SharedMoment = {
+  id: string;
+  authorId: string;
+  authorName: string;
+  text?: string;
+  /** first photo (loaded from momentMedia) and its tiny blurred preview */
+  photoId?: string;
+  thumb?: string;
+  photoCount?: number;
+};
+
 export type Message = {
   id: string;
   /** missing on older messages, which are all text */
@@ -103,6 +117,8 @@ export type Message = {
   liveUntil?: Timestamp;
   /** sent with "Forward" from another chat */
   forwarded?: boolean;
+  /** a moment shared into the chat (shown as a preview card that opens it) */
+  moment?: SharedMoment;
   /** sent with "Schedule": createdAt is the send time, hidden from them until then */
   scheduled?: boolean;
   editedAt?: Timestamp | null;
@@ -184,7 +200,7 @@ export async function sendMessage(
   recipientId: string,
   text: string,
   replyTo?: ReplyRef | null,
-  { forwarded = false, id }: { forwarded?: boolean; id?: string } = {}
+  { forwarded = false, id, moment }: { forwarded?: boolean; id?: string; moment?: SharedMoment } = {}
 ) {
   const batch = writeBatch(db);
   // A known id (lib/outbox.ts) makes a retry overwrite rather than duplicate.
@@ -195,6 +211,7 @@ export async function sendMessage(
     createdAt: serverTimestamp(),
     ...(replyTo ? { replyTo: { ...replyTo, text: replyTo.text.slice(0, 200) } } : {}),
     ...(forwarded ? { forwarded: true } : {}),
+    ...(moment ? { moment } : {}),
   });
   addChatUpdate(batch, chatId, senderId, recipientId, text);
   await batch.commit();

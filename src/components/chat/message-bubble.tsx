@@ -32,7 +32,7 @@ import { haptics } from '@/lib/haptics';
 import { LinkPreview } from './link-preview';
 import { firstUrl, LinkifiedText } from './linkified-text';
 import { AudioContent, ImageContent } from './media-content';
-import { CallContent, LocationContent } from './special-content';
+import { CallContent, LocationContent, MomentShareContent } from './special-content';
 
 /** How far to drag right before letting go starts a reply. */
 const REPLY_AT = 56;
@@ -308,6 +308,8 @@ export function MessageBubble({
               />
             ) : type === 'location' ? (
               <LocationContent message={message} mine={mine} onLongPress={longPress} />
+            ) : message.moment && !message.deleted ? (
+              <MomentShareContent message={message} mine={mine} onLongPress={longPress} />
             ) : (
               <View
                 style={[
@@ -377,7 +379,7 @@ export function MessageBubble({
                 {type === 'audio' || type === 'call' ? <View style={styles.metaEnd}>{meta}</View> : null}
               </View>
             )}
-            {type === 'image' || type === 'location' ? (
+            {type === 'image' || type === 'location' || (message.moment && !message.deleted) ? (
               // Live location bubbles have a Stop button at the bottom: time goes on the map.
               <View style={message.liveUntil ? styles.overlayMetaTop : styles.overlayMeta} pointerEvents="none">
                 <BubbleMeta message={message} mine={mine} read={read} delivered={delivered} starred={!!starred} overlay />

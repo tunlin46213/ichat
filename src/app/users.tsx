@@ -13,6 +13,7 @@ import {
 
 import { toast } from '@/components/toast';
 import { Avatar } from '@/components/avatar';
+import { Icon } from '@/components/icon';
 import { HeaderAction } from '@/components/header-action';
 import { ListMessage } from '@/components/list-states';
 import { SkeletonRows } from '@/components/skeleton';
@@ -24,17 +25,22 @@ import { useTheme } from '@/hooks/use-theme';
 import { chatIdFor, type Message, type UserProfile } from '@/lib/chat';
 import { db } from '@/lib/firebase';
 import { forwardMessage } from '@/lib/forward';
+import { shareMomentToChat } from '@/lib/moments';
 
 /**
  * New-chat picker. With `forwardChatId` + `forwardMessageId` it becomes "Forward to…":
  * picking a person sends them a copy of that message and opens the chat.
  */
 export default function UsersScreen() {
-  const { forwardChatId, forwardMessageId } = useLocalSearchParams<{
+  const { forwardChatId, forwardMessageId, shareMomentId, shareMomentAuthor } = useLocalSearchParams<{
     forwardChatId?: string;
     forwardMessageId?: string;
+    /** "Send to…" a moment (Moments → Share) */
+    shareMomentId?: string;
+    shareMomentAuthor?: string;
   }>();
-  const forwarding = !!forwardChatId && !!forwardMessageId;
+  const sharing = !!shareMomentId;
+  const forwarding = (!!forwardChatId && !!forwardMessageId) || sharing;
   const [sendingTo, setSendingTo] = useState<string | null>(null);
   const { user, displayName } = useAuth();
   const theme = useTheme();
@@ -63,6 +69,22 @@ export default function UsersScreen() {
   async function forwardTo(person: UserProfile) {
     if (sendingTo) return;
     setSendingTo(person.id);
+    if (sharing) {
+      try {
+        const chatId = await shareMomentToChat(
+          shareMomentId!,
+          { uid: myUid, name: displayName ?? 'User' },
+          { uid: person.id, name: person.name },
+          shareMomentAuthor ?? 'Someone'
+        );
+        toast.success(`Sent to ${person.name}`, 'paperplane.fill');
+        router.replace({ pathname: '/chat/[id]', params: { id: chatId, otherId: person.id, name: person.name } });
+      } catch {
+        setSendingTo(null);
+        toast.error(`Could not send it to ${person.name}. Try again.`);
+      }
+      return;
+    }
     try {
       const snap = await getDoc(doc(db, 'chats', forwardChatId!, 'messages', forwardMessageId!));
       if (!snap.exists()) throw new Error('missing');
@@ -90,7 +112,7 @@ export default function UsersScreen() {
 
   return (
     <>
-      <Stack.Screen options={{ title: forwarding ? 'Forward to…' : 'New Chat' }} />
+      <Stack.Screen options={{ title: sharing ? 'Send to…' : forwarding ? 'Forward to…' : 'New Chat' }} />
       <HeaderAction placement="left" label="Cancel" onPress={() => router.back()} />
       <Stack.SearchBar
         placeholder="Search people"
@@ -150,7 +172,18 @@ export default function UsersScreen() {
               <Text style={[styles.name, { color: theme.text }]} numberOfLines={1}>
                 {item.name}
               </Text>
-              {sendingTo === item.id ? <ActivityIndicator style={styles.spinner} /> : null}
+              {sendingTo === item.id ? (
+                <ActivityIndicator style={styles.spinner} />
+              ) : !forwarding ? (
+                <Pressable
+                  onPress={() => router.push({ pathname: '/user/[id]', params: { id: item.id, name: item.name } })}
+                  hitSlop={10}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${item.name}, view profile`}
+                  style={styles.info}>
+                  <Icon name="info.circle" size={22} color={theme.accent} fallback="ⓘ" />
+                </Pressable>
+              ) : null}
             </View>
           </Pressable>
         )}
@@ -160,6 +193,7 @@ export default function UsersScreen() {
 }
 
 const styles = StyleSheet.create({
+  info: { paddingHorizontal: 4, marginRight: Spacing.three },
   emptyContainer: { flexGrow: 1 },
   webSearch: { paddingHorizontal: Spacing.three, paddingTop: Spacing.two },
   sectionHeader: {

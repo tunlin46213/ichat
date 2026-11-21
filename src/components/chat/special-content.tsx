@@ -1,3 +1,5 @@
+import { Image } from 'expo-image';
+import { router } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Icon } from '@/components/icon';
@@ -5,8 +7,89 @@ import { MapTiles } from '@/components/map-tiles';
 import { useTheme } from '@/hooks/use-theme';
 import { formatDuration, type Message } from '@/lib/chat';
 import { openInMaps } from '@/lib/location';
+import { useMomentPhoto } from '@/lib/moments';
 
 import { LiveLocationContent } from './live-location';
+
+/** A moment shared into the chat: its first photo (or its text) and who posted it; tap to open. */
+export function MomentShareContent({ message, mine, onLongPress }: {
+  message: Message;
+  mine: boolean;
+  onLongPress: () => void;
+}) {
+  const theme = useTheme();
+  const m = message.moment!;
+  return (
+    <Pressable
+      onPress={() => router.push({ pathname: '/moment/[id]', params: { id: m.id } })}
+      onLongPress={onLongPress}
+      delayLongPress={280}
+      accessibilityRole="link"
+      accessibilityLabel={`${m.authorName}'s moment. Open`}
+      style={[
+        momentStyles.card,
+        { backgroundColor: theme.bubbleIncoming, borderColor: mine ? theme.accent : theme.separator },
+      ]}>
+      {m.photoId ? <MomentSharePhoto photoId={m.photoId} thumb={m.thumb} count={m.photoCount ?? 1} /> : null}
+      <View style={momentStyles.body}>
+        <View style={momentStyles.head}>
+          <Icon name="photo.stack" size={13} color={theme.accent} fallback="🖼" />
+          <Text style={[momentStyles.author, { color: theme.text }]} numberOfLines={1}>
+            {`${m.authorName}'s moment`}
+          </Text>
+        </View>
+        {m.text ? (
+          <Text style={[momentStyles.text, { color: theme.text }]} numberOfLines={m.photoId ? 2 : 4}>
+            {m.text}
+          </Text>
+        ) : null}
+        <Text style={[momentStyles.open, { color: theme.accent }]}>View moment ›</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function MomentSharePhoto({ photoId, thumb, count }: { photoId: string; thumb?: string; count: number }) {
+  const theme = useTheme();
+  const { uri } = useMomentPhoto(photoId);
+  const source = uri ?? (thumb ? `data:image/jpeg;base64,${thumb}` : null);
+  return (
+    <View style={[momentStyles.photo, { backgroundColor: theme.backgroundElement }]}>
+      {source ? (
+        <Image source={{ uri: source }} blurRadius={uri ? 0 : 10} style={StyleSheet.absoluteFill} contentFit="cover" transition={150} />
+      ) : null}
+      {count > 1 ? (
+        <View style={momentStyles.count}>
+          <Icon name="square.on.square" size={11} color="#fff" fallback="▣" />
+          <Text style={momentStyles.countText}>{count}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+const momentStyles = StyleSheet.create({
+  card: { width: 240, borderRadius: 18, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth },
+  photo: { width: 240, height: 170 },
+  body: { padding: 10, gap: 4 },
+  head: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  author: { flex: 1, fontSize: 13, fontWeight: '700' },
+  text: { fontSize: 14, lineHeight: 19 },
+  open: { fontSize: 13, fontWeight: '600', marginTop: 2 },
+  count: {
+    position: 'absolute',
+    right: 8,
+    top: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderRadius: 10,
+    paddingHorizontal: 7,
+    height: 20,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  countText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+});
 
 /** Call log entry: "Voice call · 3:24" or "Missed video call", tap to call back. */
 export function CallContent({ message, mine, onCallBack }: {

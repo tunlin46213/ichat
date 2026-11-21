@@ -604,7 +604,8 @@ async function momentActivity(
   momentId: string,
   kind: 'like' | 'comment',
   text: string,
-  replyToCommentId?: string
+  replyToCommentId?: string,
+  commentId?: string
 ) {
   if (!env.FIREBASE_SERVICE_ACCOUNT) return json({ sent: 0 });
   const moment = await getDoc(env, `moments/${momentId}`);
@@ -634,6 +635,16 @@ async function momentActivity(
   if (repliedTo && repliedTo !== caller.uid && repliedTo !== authorId) {
     const body = (preview: boolean) => (preview && text ? `replied: ${text}` : 'replied to your comment 💬');
     sends.push(sendMomentAlert(env, caller, momentId, repliedTo, body));
+  }
+  // @mentions: read from the saved comment, which must be the caller's own.
+  if (kind === 'comment' && commentId) {
+    const comment = await getDoc(env, `moments/${momentId}/comments/${commentId}`);
+    if (comment?.fields?.authorId?.stringValue === caller.uid) {
+      const alerted = new Set([caller.uid, authorId, repliedTo]);
+      const mentioned = strings(comment.fields.mentions).filter((uid) => !alerted.has(uid)).slice(0, 10);
+      const body = (preview: boolean) => (preview && text ? `mentioned you: ${text}` : 'mentioned you in a comment 💬');
+      for (const uid of mentioned) sends.push(sendMomentAlert(env, caller, momentId, uid, body));
+    }
   }
   const counts = await Promise.all(sends);
   return json({ sent: counts.reduce((a, b) => a + b, 0) });
@@ -901,18 +912,25 @@ export default {
         return await storyPosted(env, caller, storyId);
       }
       if (pathname === '/moment-activity') {
-        const { momentId, kind, text, replyTo } = (await request.json()) as {
+        const { momentId, kind, text, replyTo, commentId } = (await request.json()) as {
           momentId?: string;
           kind?: string;
           text?: string;
           replyTo?: string;
+          commentId?: string;
         };
         const id = /^[A-Za-z0-9]{10,40}$/;
-        if (!momentId || !id.test(momentId) || (kind !== 'like' && kind !== 'comment') || (replyTo && !id.test(replyTo))) {
+        if (
+          !momentId ||
+          !id.test(momentId) ||
+          (kind !== 'like' && kind !== 'comment') ||
+          (replyTo && !id.test(replyTo)) ||
+          (commentId && !id.test(commentId))
+        ) {
           return json({ error: 'bad request' }, 400);
         }
         const clean = typeof text === 'string' ? text.slice(0, 120) : '';
-        return await momentActivity(env, caller, momentId, kind, clean, replyTo || undefined);
+        return await momentActivity(env, caller, momentId, kind, clean, replyTo || undefined, commentId || undefined);
       }
       if (pathname.startsWith('/admin/')) {
         if (!(await isAdmin(env, uid))) return json({ error: 'forbidden' }, 403);

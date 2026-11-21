@@ -11,4 +11,13 @@ export async function savePhotoToLibrary(chatId: string, mediaId: string) {
   a.remove();
 }
 
+export async function saveBase64Photo(base64: string, name: string) {
+  const a = document.createElement('a');
+  a.href = `data:image/jpeg;base64,${base64}`;
+  a.download = `ichat-${name}.jpg`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
 export const saveLabel = 'Download';

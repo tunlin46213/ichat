@@ -13,30 +13,42 @@ import type { SharedMedia } from '@/hooks/use-shared-media';
 import { formatChatTime, formatDuration, type Message } from '@/lib/chat';
 import { haptics } from '@/lib/haptics';
 
-type Tab = 'photos' | 'voice' | 'links';
+export type ProfileTab = 'moments' | 'photos' | 'voice' | 'links';
 
 /** Photos are full-size base64 docs, so only load a screenful until asked for more. */
 const PHOTO_PAGE = 24;
 
-/** Photos / Voice / Links shared in a chat, with a segmented control on top. */
-export function SharedMediaSection({ chatId, media, senderName }: {
-  chatId: string;
+/**
+ * Profile content with a segmented control: their Moments, then Photos / Voice / Links
+ * shared in our chat (those three only when there is a chat). The tab is controlled so
+ * the profile's stats row can switch it.
+ */
+export function SharedMediaSection({ chatId, media, senderName, moments, tab, onTab }: {
+  chatId: string | null;
   media: SharedMedia;
   senderName: (uid: string) => string;
+  moments: { count: number; loading?: boolean; content: React.ReactNode };
+  tab: ProfileTab;
+  onTab: (tab: ProfileTab) => void;
 }) {
   const theme = useTheme();
   const { bubbleColor } = useAppearance();
-  const [tab, setTab] = useState<Tab>('photos');
+  const setTab = onTab;
   const [shown, setShown] = useState(PHOTO_PAGE);
   const [voiceShown, setVoiceShown] = useState(3);
   const [viewer, setViewer] = useState<number | null>(null);
   // The viewer swipes forward in time, so give it oldest first.
   const viewerPhotos = [...media.photos].reverse();
 
-  const tabs: { id: Tab; label: string; count: number }[] = [
-    { id: 'photos', label: 'Photos', count: media.photos.length },
-    { id: 'voice', label: 'Voice', count: media.voice.length },
-    { id: 'links', label: 'Links', count: media.links.length },
+  const tabs: { id: ProfileTab; label: string; count: number }[] = [
+    { id: 'moments', label: 'Moments', count: moments.count },
+    ...(chatId
+      ? ([
+          { id: 'photos', label: 'Photos', count: media.photos.length },
+          { id: 'voice', label: 'Voice', count: media.voice.length },
+          { id: 'links', label: 'Links', count: media.links.length },
+        ] as const)
+      : []),
   ];
 
   return (
@@ -63,7 +75,15 @@ export function SharedMediaSection({ chatId, media, senderName }: {
         })}
       </View>
 
-      {media.loading ? (
+      {tab === 'moments' ? (
+        moments.loading ? (
+          <ActivityIndicator style={styles.loading} />
+        ) : moments.count ? (
+          <View style={styles.momentsPad}>{moments.content}</View>
+        ) : (
+          <Empty icon="photo.stack" text="No moments yet" />
+        )
+      ) : !chatId ? null : media.loading ? (
         <ActivityIndicator style={styles.loading} />
       ) : tab === 'photos' ? (
         media.photos.length ? (
@@ -150,7 +170,7 @@ export function SharedMediaSection({ chatId, media, senderName }: {
         <Empty icon="link" text="No links yet" />
       )}
 
-      {viewer !== null ? (
+      {viewer !== null && chatId ? (
         <PhotoViewer
           chatId={chatId}
           photos={viewerPhotos}
@@ -188,7 +208,7 @@ function Thumb({ chatId, message, onPress }: { chatId: string; message: Message;
   );
 }
 
-function Empty({ icon, text }: { icon: 'photo.on.rectangle' | 'mic.fill' | 'link'; text: string }) {
+function Empty({ icon, text }: { icon: 'photo.on.rectangle' | 'mic.fill' | 'link' | 'photo.stack'; text: string }) {
   const theme = useTheme();
   return (
     <View style={styles.empty}>
@@ -199,6 +219,7 @@ function Empty({ icon, text }: { icon: 'photo.on.rectangle' | 'mic.fill' | 'link
 }
 
 const styles = StyleSheet.create({
+  momentsPad: { padding: 2 },
   flex: { flex: 1 },
   card: { borderRadius: Radius.lg, borderWidth: StyleSheet.hairlineWidth, boxShadow: Elevation.card, padding: Spacing.two, overflow: 'hidden' },
   segments: { flexDirection: 'row', borderRadius: 9, padding: 2, marginBottom: Spacing.two },
@@ -223,6 +244,6 @@ const styles = StyleSheet.create({
   linkRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, paddingHorizontal: 4 },
   linkIcon: { width: 34, height: 34, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   linkHost: { fontSize: 15, fontWeight: '600' },
-  empty: { alignItems: 'center', gap: 8, paddingVertical: Spacing.four },
+  empty: { alignItems: 'center', gap: 6, paddingVertical: Spacing.three },
   emptyText: { fontSize: 14 },
 });

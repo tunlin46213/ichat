@@ -18,14 +18,15 @@ export function firstUrl(text: string) {
 }
 
 /** Text with tappable, underlined links. */
-export function LinkifiedText({ text, style, linkColor }: {
+export function LinkifiedText({ text, style, linkColor, numberOfLines }: {
   text: string;
   style?: StyleProp<TextStyle>;
   linkColor: string;
+  numberOfLines?: number;
 }) {
   const parts = text.split(URL_RE);
   return (
-    <Text style={style}>
+    <Text style={style} numberOfLines={numberOfLines}>
       {parts.map((part, i) =>
         // split() with a capture group puts the matches at odd indexes
         i % 2 === 1 ? (

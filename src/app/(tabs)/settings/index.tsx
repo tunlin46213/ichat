@@ -26,6 +26,8 @@ import { authErrorMessage, useAuth } from '@/context/auth';
 import { useBlocks } from '@/context/blocks';
 import { useTheme } from '@/hooks/use-theme';
 import { useUserProfile } from '@/hooks/use-user-profile';
+import { db } from '@/lib/firebase';
+import { deleteField, doc, updateDoc } from 'firebase/firestore';
 import { confirmDestructive } from '@/lib/confirm';
 import { haptics } from '@/lib/haptics';
 import { mediaErrorMessage, pickImage, updateAvatar } from '@/lib/media';
@@ -111,6 +113,22 @@ export default function SettingsScreen() {
   const { bubbleColor } = useAppearance();
   const theme = useTheme();
   const name = displayName ?? 'You';
+
+  const bio = myProfile?.bio ?? '';
+
+  function editBio() {
+    promptText({
+      title: 'Bio',
+      message: 'A short line about you, shown on your profile (100 characters).',
+      defaultValue: bio,
+      confirmLabel: 'Save',
+      onSubmit: (value) => {
+        const clean = value.trim().replace(/\s+/g, ' ').slice(0, 100);
+        if (clean === bio || !user) return;
+        updateDoc(doc(db, 'users', user.uid), { bio: clean || deleteField() }).then(() => haptics.success(), showError);
+      },
+    });
+  }
 
   function editName() {
     promptText({
@@ -225,6 +243,7 @@ export default function SettingsScreen() {
 
       <Section title="PROFILE">
         <Row icon="pencil" iconBg="#007AFF" label="Edit Name" value={name} onPress={editName} />
+        <Row icon="text.quote" iconBg="#AF52DE" label="Bio" value={bio || 'Add'} onPress={editBio} />
       </Section>
 
       <Section title="CHATS">

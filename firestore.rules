@@ -47,7 +47,9 @@ service cloud.firestore {
         && request.auth.uid == userId
         && request.resource.data.name is string
         && request.resource.data.name.size() > 0
-        && request.resource.data.name.size() <= 40;
+        && request.resource.data.name.size() <= 40
+        && (!('bio' in request.resource.data)
+            || (request.resource.data.bio is string && request.resource.data.bio.size() <= 100));
       allow delete: if signedIn() && request.auth.uid == userId;
 
       // Private per-user data (push tokens). Only the owner; Cloud Functions bypass rules.
@@ -164,6 +166,12 @@ service cloud.firestore {
           && request.resource.data.text.size() > 0
           && request.resource.data.text.size() <= 500
           && exists(/databases/$(database)/documents/moments/$(momentId));
+        // Like / unlike a comment: only my own entry in `likes`.
+        allow update: if member()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes'])
+          && request.resource.data.get('likes', {})
+               .diff(resource.data.get('likes', {}))
+               .affectedKeys().hasOnly([request.auth.uid]);
         // The commenter, or the moment's author (also when deleting the whole moment).
         allow delete: if signedIn()
           && (resource.data.authorId == request.auth.uid
